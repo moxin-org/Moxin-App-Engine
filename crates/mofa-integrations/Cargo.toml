@@ -28,7 +28,7 @@ hex.workspace = true
 mofa-kernel = { path = "../mofa-kernel", version = "0.1" }
 
 # ── Socket.IO feature ──────────────────────────────────────────────────────────
-socketioxide = { version = "0.15", optional = true }
+socketioxide = { version = "0.18", optional = true }
 axum = { workspace = true, optional = true }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }

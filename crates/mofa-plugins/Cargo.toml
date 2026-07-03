@@ -32,7 +32,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 rand.workspace = true
 # WASM plugin runtime
-wasmtime = { version = "40", features = ["component-model", "async"] }
+wasmtime = { version = "44", features = ["component-model", "async"] }
 # Local dependencies
 mofa-kernel = { path = "../mofa-kernel", version = "0.1" }
 reqwest = { workspace = true, features = ["json", "rustls-tls", "multipart"] }
@@ -42,18 +42,18 @@ rhai = { version = "1.20", features = ["sync", "serde"] }
 url = "2.5.7"
 regex = "1.12.2"
 walkdir = "2.4"
-which = "7"
+which = "8"
 # TTS support (optional - using rodio for audio playback)
-rodio = { version = "0.17", optional = true }
+rodio = { version = "0.22", optional = true }
 # Kokoro TTS (optional)
-kokoro-tts = { version = "=0.2.9", optional = true }
+kokoro-tts = { version = "=0.3.1", optional = true }
 # Pin ort version for kokoro-tts compatibility across workspace resolution
-ort = { version = "=2.0.0-rc.10", optional = true }
+ort = { version = "=2.0.0-rc.12", optional = true }
 # Model download support
-hf-hub = "0.4"
+hf-hub = "0.5"
 tokio-util = { version = "0.7", features = ["io"] }
-dirs = "5.0"
-md-5 = "0.10"
+dirs = "6.0"
+md-5 = "0.11"
 backoff = { version = "0.4", features = ["tokio"] }
 futures = "0.3"
 
