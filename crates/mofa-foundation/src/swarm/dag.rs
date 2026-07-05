@@ -250,13 +250,25 @@ impl SubtaskDAG {
                         let dep = &self.graph[edge.source()];
                         let dep_edge = edge.weight();
                         match dep_edge.kind {
-                            DependencyKind::Sequential | DependencyKind::DataFlow => {
-                                matches!(
-                                    dep.status,
-                                    SubtaskStatus::Completed
-                                        | SubtaskStatus::Skipped
-                                        | SubtaskStatus::Failed(_)
-                                )
+                            // Sequential is a temporal ordering — the downstream task can
+                            // run once the upstream has reached any terminal state. We
+                            // intentionally treat Failed as satisfying the dep here so a
+                            // single failure does not deadlock the rest of the DAG;
+                            // callers opt into hard cascading via `cascade_skip` /
+                            // `FailurePolicy::FailFastCascade`.
+                            DependencyKind::Sequential => matches!(
+                                dep.status,
+                                SubtaskStatus::Completed
+                                    | SubtaskStatus::Skipped
+                                    | SubtaskStatus::Failed(_)
+                            ),
+                            // DataFlow means the downstream consumes the upstream's
+                            // output. A Failed or Skipped upstream produced no output,
+                            // so running the downstream would feed it missing data.
+                            // Leave it Pending and let the scheduler's stall handling
+                            // mark it Skipped at the end of the run.
+                            DependencyKind::DataFlow => {
+                                dep.status == SubtaskStatus::Completed
                             }
                             DependencyKind::Soft => true,
                         }
@@ -833,6 +845,88 @@ mod tests {
             ready,
             vec![d],
             "d must become ready when all deps are terminal"
+        );
+    }
+
+    #[test]
+    fn test_dataflow_dependency_blocks_on_failed_upstream() {
+        // DataFlow edges represent "downstream consumes upstream's output". A
+        // Failed upstream produced no output, so the downstream must NOT be
+        // considered ready — otherwise we'd run a task whose input doesn't
+        // exist. (Sequential edges are temporal-only and are still satisfied
+        // by Failed; that's covered by test_failed_dependency_unblocks_downstream.)
+        let mut dag = SubtaskDAG::new("dataflow-fail");
+        let a = dag.add_task(SwarmSubtask::new("a", "Produces data"));
+        let b = dag.add_task(SwarmSubtask::new("b", "Consumes a's output"));
+
+        dag.add_dependency_with_kind(a, b, DependencyKind::DataFlow)
+            .unwrap();
+
+        dag.mark_failed(a, "upstream error");
+
+        assert!(
+            dag.ready_tasks().is_empty(),
+            "b must not become ready when its DataFlow upstream failed"
+        );
+    }
+
+    #[test]
+    fn test_dataflow_dependency_blocks_on_skipped_upstream() {
+        // Skipped upstream produced no output either.
+        let mut dag = SubtaskDAG::new("dataflow-skip");
+        let a = dag.add_task(SwarmSubtask::new("a", "Skipped producer"));
+        let b = dag.add_task(SwarmSubtask::new("b", "Consumer"));
+
+        dag.add_dependency_with_kind(a, b, DependencyKind::DataFlow)
+            .unwrap();
+
+        dag.mark_skipped(a);
+
+        assert!(
+            dag.ready_tasks().is_empty(),
+            "b must not become ready when its DataFlow upstream was skipped"
+        );
+    }
+
+    #[test]
+    fn test_dataflow_dependency_ready_when_upstream_completes() {
+        let mut dag = SubtaskDAG::new("dataflow-ok");
+        let a = dag.add_task(SwarmSubtask::new("a", "Producer"));
+        let b = dag.add_task(SwarmSubtask::new("b", "Consumer"));
+
+        dag.add_dependency_with_kind(a, b, DependencyKind::DataFlow)
+            .unwrap();
+
+        dag.mark_complete_with_output(a, Some("payload".into()));
+
+        assert_eq!(
+            dag.ready_tasks(),
+            vec![b],
+            "b should be ready once its DataFlow upstream completes"
+        );
+    }
+
+    #[test]
+    fn test_mixed_dataflow_and_sequential_deps_on_failed_upstream() {
+        // b has a DataFlow dep on `producer` and a Sequential dep on `gate`.
+        // If `producer` fails, b cannot run even if `gate` is terminal —
+        // the missing data is the binding constraint.
+        let mut dag = SubtaskDAG::new("mixed-deps");
+        let producer = dag.add_task(SwarmSubtask::new("producer", "Produces data"));
+        let gate = dag.add_task(SwarmSubtask::new("gate", "Ordering only"));
+        let b = dag.add_task(SwarmSubtask::new("b", "Needs data + ordering"));
+
+        dag.add_dependency_with_kind(producer, b, DependencyKind::DataFlow)
+            .unwrap();
+        dag.add_dependency_with_kind(gate, b, DependencyKind::Sequential)
+            .unwrap();
+
+        dag.mark_failed(producer, "boom");
+        dag.mark_complete(gate);
+
+        assert!(
+            dag.ready_tasks().is_empty(),
+            "b must stay pending while its DataFlow upstream is in a non-success state"
         );
     }
 
