@@ -1,0 +1,8 @@
+[package]
+name = "memory_drift_testing"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mofa-testing = { path = "../../tests" }
+tokio = { workspace = true }
