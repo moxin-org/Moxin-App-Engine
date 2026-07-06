@@ -119,8 +119,8 @@ async fn run_command(cli: Cli) -> CliResult<()> {
             commands::build::run(release, features.as_deref())?;
         }
 
-        Some(Commands::Run { config, dora }) => {
-            commands::run::run(&config, dora)?;
+        Some(Commands::Run { config, dora, dry_run }) => {
+            commands::run::run(&config, dora, dry_run)?;
         }
 
         #[cfg(feature = "dora")]

@@ -79,6 +79,10 @@ pub enum Commands {
         /// Enable dora runtime
         #[arg(long)]
         dora: bool,
+
+        /// Validate workflow without executing (dry run)
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Run a dora dataflow

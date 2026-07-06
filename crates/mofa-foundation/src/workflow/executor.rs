@@ -235,6 +235,17 @@ impl WorkflowExecutor {
         workflows.insert(id.to_string(), Arc::new(graph));
     }
 
+    /// 验证工作流 (Dry Run)
+    /// Validate workflow statically without running
+    pub async fn validate(&self, graph: &WorkflowGraph) -> Result<(), crate::workflow::validator::ValidationReport> {
+        let report = crate::workflow::validator::WorkflowValidator::validate(graph);
+        if report.is_valid() {
+            Ok(())
+        } else {
+            Err(report)
+        }
+    }
+
     /// 发送执行事件
     /// Emit execution event
     async fn emit_event(&self, event: ExecutionEvent) {
