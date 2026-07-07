@@ -54,6 +54,8 @@ pub fn role_assistant() -> PromptTemplate {
             PromptVariable::new("expertise")
                 .with_description("Professional field")
                 // Professional field
+                .with_default("解决问题和提供帮助"),
+            // Problem solving and providing help
                 .with_default("Solving problems and providing help"),
             // Solving problems and providing help
         )
@@ -89,6 +91,7 @@ pub fn code_review() -> PromptTemplate {
             PromptVariable::new("language")
                 .with_description("Programming language")
                 // Programming language
+                .with_default("代码"),
                 .with_default("code"),
             // Code
         )
@@ -119,6 +122,7 @@ pub fn code_explain() -> PromptTemplate {
             PromptVariable::new("language")
                 .with_description("Programming language")
                 // Programming language
+                .with_default("代码"),
                 .with_default("code"),
             // Code
         )
@@ -177,6 +181,7 @@ pub fn code_refactor() -> PromptTemplate {
             PromptVariable::new("language")
                 .with_description("Programming language")
                 // Programming language
+                .with_default("代码"),
                 .with_default("code"),
             // Code
         )
@@ -186,6 +191,7 @@ pub fn code_refactor() -> PromptTemplate {
             PromptVariable::new("goal")
                 .with_description("Refactoring goal")
                 // Refactoring goal
+                .with_default("使其更加清晰、高效"),
                 .with_default("Make it clearer and more efficient"),
             // Make it clearer and more efficient
         )
@@ -218,6 +224,7 @@ pub fn code_test() -> PromptTemplate {
             PromptVariable::new("test_framework")
                 .with_description("Test framework")
                 // Test framework
+                .with_default("标准"),
                 .with_default("standard"),
             // Standard
         )

@@ -460,6 +460,17 @@ impl AgentExecutor {
                     let result = {
                         let tools_guard = self.tools.read().await;
                         if let Some(tool) = tools_guard.get(&tool_call.name) {
+                            match tool
+                                .execute_dynamic(
+                                    tool_call.arguments.clone(),
+                                    &AgentContext::new("executor"),
+                                )
+                                .await
+                            {
+                                Ok(out) => {
+                                    mofa_kernel::agent::components::tool::ToolResult::success(out)
+                                }
+                                Err(e) => {
                             let timeout_dur = self.config.tool_timeout;
                             match tokio::time::timeout(
                                 timeout_dur,

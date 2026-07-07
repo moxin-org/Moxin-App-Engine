@@ -225,6 +225,10 @@ impl Pipeline {
         let true_steps = if if_true.steps.is_empty() {
             vec![PipelineStep::Identity]
         } else {
+            // 多步骤情况，需要嵌套
+            // Multi-step case, requires nesting
+            PipelineStep::Identity // 简化处理
+            // Simplified handling
             if_true.steps
         };
 
