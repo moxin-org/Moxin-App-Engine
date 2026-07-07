@@ -214,7 +214,7 @@ pub trait MoFAAgent: Send + Sync + 'static {
     /// # State Transitions
     ///
     /// Ready -> Executing -> Ready
-    async fn execute(&mut self, input: AgentInput, ctx: &AgentContext) -> AgentResult<AgentOutput>;
+    async fn execute(&self, input: AgentInput, ctx: &AgentContext) -> AgentResult<AgentOutput>;
 
     /// 关闭 Agent
     /// Shutdown Agent

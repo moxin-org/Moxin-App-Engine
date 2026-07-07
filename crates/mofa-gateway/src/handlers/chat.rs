@@ -105,7 +105,7 @@ pub async fn chat(
     // Execute
     let start = std::time::Instant::now();
     let output = {
-        let mut agent = agent_arc.write().await;
+        let agent = agent_arc.read().await;
         agent
             .execute(input, &ctx)
             .await

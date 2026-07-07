@@ -3952,7 +3952,7 @@ impl mofa_kernel::agent::MoFAAgent for LLMAgent {
     }
 
     async fn execute(
-        &mut self,
+        &self,
         input: mofa_kernel::agent::AgentInput,
         _ctx: &mofa_kernel::agent::AgentContext,
     ) -> mofa_kernel::agent::AgentResult<mofa_kernel::agent::AgentOutput> {

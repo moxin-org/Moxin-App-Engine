@@ -189,7 +189,7 @@ impl MoFAAgent for BaseAgent {
     }
 
     async fn execute(
-        &mut self,
+        &self,
         _input: mofa_kernel::agent::AgentInput,
         _ctx: &mofa_kernel::agent::context::AgentContext,
     ) -> AgentResult<AgentOutput> {

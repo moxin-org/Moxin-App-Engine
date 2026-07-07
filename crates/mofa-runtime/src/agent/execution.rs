@@ -517,22 +517,25 @@ impl ExecutionEngine {
         ctx: &AgentContext,
         options: &ExecutionOptions,
     ) -> AgentResult<AgentOutput> {
-        let mut agent_guard = agent.write().await;
+        // 确保 Agent 已初始化 (Ensure Agent is initialized)
+        {
+            let mut agent_guard = agent.write().await;
+            if agent_guard.state() == AgentState::Created {
+                agent_guard.initialize(ctx).await?;
+            }
 
-        // 确保 Agent 已初始化
-        // Ensure Agent is initialized
-        if agent_guard.state() == AgentState::Created {
-            agent_guard.initialize(ctx).await?;
+            // 检查状态
+            // Check state
+            if agent_guard.state() != AgentState::Ready {
+                return Err(AgentError::invalid_state_transition(
+                    agent_guard.state(),
+                    &AgentState::Executing,
+                ));
+            }
         }
 
-        // 检查状态
-        // Check state
-        if agent_guard.state() != AgentState::Ready {
-            return Err(AgentError::invalid_state_transition(
-                agent_guard.state(),
-                &AgentState::Executing,
-            ));
-        }
+        // 此时获取读锁执行任务 (Now acquire read lock for execution)
+        let agent_guard = agent.read().await;
 
         // 执行 (带超时)
         // Execute (with timeout)
