@@ -96,7 +96,7 @@ impl AgentPlugin for ToolPluginAdapter {
     }
 
     async fn stop(&mut self) -> PluginResult<()> {
-        self.state = PluginState::Paused;
+        self.state = PluginState::Loaded;
         Ok(())
     }
 
@@ -152,4 +152,62 @@ impl AgentPlugin for ToolPluginAdapter {
 /// ```
 pub fn adapt_tool(tool: Arc<dyn Tool>) -> ToolPluginAdapter {
     ToolPluginAdapter::new(tool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use mofa_kernel::agent::components::tool::{Tool, ToolInput, ToolMetadata, ToolResult};
+    use mofa_kernel::agent::context::AgentContext;
+
+    /// Minimal mock Tool for testing the adapter
+    struct MockTool;
+
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> &str {
+            "mock_tool"
+        }
+
+        fn description(&self) -> &str {
+            "A mock tool for testing"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(
+            &self,
+            _input: ToolInput,
+            _ctx: &AgentContext,
+        ) -> ToolResult {
+            ToolResult::success_text("ok")
+        }
+
+        fn metadata(&self) -> ToolMetadata {
+            ToolMetadata::default()
+        }
+    }
+
+    /// Regression test for Issue #534 (follow-up to #448):
+    /// ToolPluginAdapter::stop() must transition to Loaded, not Paused.
+    #[tokio::test]
+    async fn test_tool_adapter_stop_sets_loaded_state() {
+        let tool = Arc::new(MockTool);
+        let mut adapter = ToolPluginAdapter::new(tool);
+
+        let ctx = PluginContext::new("test_agent");
+        adapter.load(&ctx).await.unwrap();
+        adapter.start().await.unwrap();
+        assert_eq!(adapter.state(), PluginState::Running);
+
+        adapter.stop().await.unwrap();
+        assert_eq!(
+            adapter.state(),
+            PluginState::Loaded,
+            "stop() must set state to Loaded, not Paused (Issue #534)"
+        );
+    }
 }

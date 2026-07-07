@@ -813,7 +813,7 @@ impl AgentPlugin for TTSPlugin {
     }
 
     async fn stop(&mut self) -> PluginResult<()> {
-        self.state = PluginState::Paused;
+        self.state = PluginState::Loaded;
         info!("TTS plugin {} stopped", self.metadata.id);
         Ok(())
     }
@@ -1080,7 +1080,7 @@ mod tests {
         assert_eq!(plugin.state(), PluginState::Running);
 
         plugin.stop().await.unwrap();
-        assert_eq!(plugin.state(), PluginState::Paused);
+        assert_eq!(plugin.state(), PluginState::Loaded);
 
         plugin.unload().await.unwrap();
         assert_eq!(plugin.state(), PluginState::Unloaded);
@@ -1215,5 +1215,31 @@ mod tests {
 
         plugin.init_plugin().await.unwrap();
         assert_eq!(plugin.engine.as_ref().unwrap().name(), "MockTTS");
+    }
+
+    /// Regression test for Issue #534 (follow-up to #448):
+    /// TTSPlugin::stop() must transition to Loaded, not Paused.
+    /// stop() = proper shutdown (resources intact, not running)
+    /// pause() = temporary suspension (can be resumed)
+    #[tokio::test]
+    async fn test_tts_plugin_stop_sets_loaded_state() {
+        let mut plugin = TTSPlugin::new("test_tts");
+        let ctx = PluginContext::new("test_agent");
+
+        plugin.load(&ctx).await.unwrap();
+
+        // Use mock engine to avoid model download in tests
+        let mock_engine = MockTTSEngine::new(TTSPluginConfig::default());
+        plugin.engine = Some(Arc::new(mock_engine));
+
+        plugin.start().await.unwrap();
+        assert_eq!(plugin.state(), PluginState::Running);
+
+        plugin.stop().await.unwrap();
+        assert_eq!(
+            plugin.state(),
+            PluginState::Loaded,
+            "stop() must set state to Loaded, not Paused (Issue #534)"
+        );
     }
 }
