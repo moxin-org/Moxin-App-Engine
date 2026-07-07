@@ -4,7 +4,7 @@
 
 use mofa_kernel::metrics::LLMMetricsSource;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -12,6 +12,12 @@ use std::time::{Duration, Instant};
 use sysinfo::{Pid, System};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+
+fn thread_count_from_tasks(tasks: Option<&HashSet<Pid>>) -> u32 {
+    tasks
+        .map(|task_set| u32::try_from(task_set.len()).unwrap_or(u32::MAX))
+        .unwrap_or(0)
+}
 
 /// Metric type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -594,13 +600,7 @@ impl MetricsCollector {
             let pid = Pid::from_u32(std::process::id());
             let (cpu_usage, memory_used, thread_count) = sys
                 .process(pid)
-                .map(|p| {
-                    (
-                        p.cpu_usage() as f64,
-                        p.memory(),
-                        p.tasks().iter().count() as u32,
-                    )
-                })
+                .map(|p| (p.cpu_usage() as f64, p.memory(), thread_count_from_tasks(p.tasks())))
                 .unwrap_or((0.0, 0, 0));
 
             SystemMetrics {
@@ -753,6 +753,21 @@ impl MetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_thread_count_from_tasks_counts_all_tasks() {
+        let mut tasks = HashSet::new();
+        tasks.insert(Pid::from_u32(10));
+        tasks.insert(Pid::from_u32(20));
+        tasks.insert(Pid::from_u32(30));
+
+        assert_eq!(thread_count_from_tasks(Some(&tasks)), 3);
+    }
+
+    #[test]
+    fn test_thread_count_from_tasks_handles_none() {
+        assert_eq!(thread_count_from_tasks(None), 0);
+    }
 
     #[tokio::test]
     async fn test_counter() {
