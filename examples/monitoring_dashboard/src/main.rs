@@ -56,6 +56,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Build the router (this also sets up WebSocket handler)
     let router = server.build_router();
 
+    // Prime and start Prometheus refresh worker
+    if let Some(exporter) = server.prometheus_exporter() {
+        let _ = exporter.refresh_once().await;
+        exporter.start();
+    }
+
     // Start metrics collection background task
     collector.clone().start_collection();
 
