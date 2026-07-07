@@ -466,8 +466,16 @@ impl<S: GraphState> CompiledGraphImpl<S> {
             .collect()
     }
 
-    /// Get the next node(s) based on the current node and command
-    fn get_next_nodes(&self, current_node: &str, command: &Command) -> AgentResult<Vec<String>> {
+    /// Determine the next node(s) based on the current node, its command, and the
+    /// graph edge map.
+    ///
+    /// This is a **static** helper so that both `invoke()` and `stream()` share
+    /// a single routing implementation (see issue #1053).
+    fn resolve_next_nodes(
+        edges: &HashMap<NodeId, EdgeTarget>,
+        current_node: &str,
+        command: &Command,
+    ) -> AgentResult<Vec<String>> {
         match &command.control {
             ControlFlow::Goto(target) => Ok(vec![target.clone()]),
             ControlFlow::Return => {
@@ -479,7 +487,7 @@ impl<S: GraphState> CompiledGraphImpl<S> {
             }
             ControlFlow::Continue => {
                 // Follow graph edges
-                match self.edges.get(current_node) {
+                match edges.get(current_node) {
                     Some(EdgeTarget::Single(target)) => Ok(vec![target.clone()]),
                     Some(EdgeTarget::Parallel(targets)) => Ok(targets.clone()),
                     Some(EdgeTarget::Conditional(routes)) => {
@@ -610,7 +618,7 @@ impl<S: GraphState> CompiledGraphImpl<S> {
                 self.apply_updates(&mut state, &command.updates).await?;
 
                 // Get next nodes
-                current_nodes = self.get_next_nodes(&node_id, &command)?;
+                current_nodes = Self::resolve_next_nodes(&self.edges, &node_id, &command)?;
 
                 debug!(
                     "Node '{}' completed, next nodes: {:?}",
@@ -633,7 +641,7 @@ impl<S: GraphState> CompiledGraphImpl<S> {
                     self.apply_updates(&mut state, &command.updates).await?;
 
                     // Collect next nodes
-                    let next = self.get_next_nodes(&node_id, &command)?;
+                    let next = Self::resolve_next_nodes(&self.edges, &node_id, &command)?;
                     next_nodes.extend(next);
                 }
 
@@ -712,56 +720,7 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                 let mut state = input;
                 let mut current_nodes = vec![entry_point];
                 let default_policy = NodePolicy::default();
-
-            // Helper function to get next nodes based on command and edges
-            let get_next_nodes = |current_node: &str, command: &Command| -> AgentResult<Vec<String>> {
-                match &command.control {
-                    ControlFlow::Goto(target) => Ok(vec![target.clone()]),
-                    ControlFlow::Return => Ok(vec![]), // End execution
-                    ControlFlow::Send(sends) => {
-                        // MapReduce: create branches for each send target
-                        Ok(sends.iter().map(|s| s.target.clone()).collect())
-                    }
-                    ControlFlow::Continue => {
-                        // Follow graph edges
-                        match edges.get(current_node) {
-                            Some(EdgeTarget::Single(target)) => Ok(vec![target.clone()]),
-                            Some(EdgeTarget::Parallel(targets)) => Ok(targets.clone()),
-                            Some(EdgeTarget::Conditional(routes)) => {
-                                // Priority 1: explicit route decision
-                                if let Some(decision) = command.route_value()
-                                    && let Some(target) = routes.get(decision)
-                                {
-                                    return Ok(vec![target.clone()]);
-                                }
-                                // Priority 2: legacy key-name matching (backward compatible)
-                                for update in &command.updates {
-                                    if let Some(target) = routes.get(&update.key) {
-                                        return Ok(vec![target.clone()]);
-                                    }
-                                }
-                                // No route matched — report error instead of silent fallback
-                                let update_keys: Vec<&str> = command.updates.iter().map(|u| u.key.as_str()).collect();
-                                let route_keys: Vec<&String> = routes.keys().collect();
-                                warn!(
-                                    node_id = current_node,
-                                    ?update_keys,
-                                    ?route_keys,
-                                    "Conditional routing: no route matched for node"
-                                );
-                                Err(AgentError::Internal(format!(
-                                    "No conditional route matched for node '{}': update keys {:?}, available routes {:?}",
-                                    current_node, update_keys, route_keys
-                                )))
-                            }
-                            None => Ok(vec![]),
-                            _ => Ok(vec![]),
-                        }
-                    }
-                    _ => Ok(vec![]),
-                }
-            };
-
+            // Use the shared static routing method (see issue #1053)
             while !current_nodes.is_empty() {
                 // Check recursion limit
                 if ctx.is_recursion_limit_reached().await {
@@ -881,7 +840,7 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                         return;
                     }
 
-                    match get_next_nodes(&node_id, &command) {
+                    match CompiledGraphImpl::<S>::resolve_next_nodes(&edges, &node_id, &command) {
                         Ok(nodes) => next_nodes.extend(nodes),
                         Err(e) => {
                             let _ = tx
@@ -973,7 +932,7 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                             return;
                         }
 
-                        match get_next_nodes(&node_id, &command) {
+                        match CompiledGraphImpl::<S>::resolve_next_nodes(&edges, &node_id, &command) {
                             Ok(nodes) => next_nodes.extend(nodes),
                             Err(e) => {
                                 let _ = tx
@@ -1052,7 +1011,7 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
         self.apply_updates(&mut state, &command.updates).await?;
 
         // Get next nodes
-        let next_nodes = self.get_next_nodes(&node_id, &command)?;
+        let next_nodes = Self::resolve_next_nodes(&self.edges, &node_id, &command)?;
         let is_complete = next_nodes.is_empty();
         let next_node = next_nodes.into_iter().next();
 
