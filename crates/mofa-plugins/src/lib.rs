@@ -29,9 +29,19 @@ pub use mofa_kernel::{
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+
+use async_openai::Client;
+use async_openai::config::OpenAIConfig;
+use async_openai::error::OpenAIError;
+use async_openai::types::{
+    ChatCompletionRequestMessage, ChatCompletionRequestUserMessageArgs,
+    CreateChatCompletionRequestArgs,
+};
+use futures::StreamExt;
+
 // ============================================================================
 // LLM 插件
 // LLM Plugin
@@ -162,24 +172,66 @@ impl LLMClient for OpenAIClient {
         prompt: &str,
         callback: Box<dyn Fn(String) + Send + Sync>,
     ) -> PluginResult<String> {
-        // 模拟流式生成 TODO
-        // Mock stream generation TODO
-        // Stub: simulates word-level streaming with inter-token spacing.
-        // Replace with a real SSE/delta streaming call (e.g. via `async-openai`)
-        // once live credentials and an HTTP client are wired in.
-        let response = format!("[{}] Stream response to: {}", self.config.model, prompt);
-        let words: Vec<&str> = response.split_whitespace().collect();
-        let len = words.len();
-        for (i, word) in words.iter().enumerate() {
-            let chunk = if i + 1 < len {
-                format!("{} ", word) // preserve trailing space between tokens
-            } else {
-                word.to_string()
-            };
-            callback(chunk);
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // removes mock with open sse real streaming call
+
+        let api_key = self
+            .config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| std::env::var("API_KEY").ok())
+            .ok_or_else(|| PluginError::InitFailed("Missing OpenAI API key".into()))?;
+        let config = OpenAIConfig::new().with_api_key(api_key);
+
+        let client = Client::with_config(config);
+
+        let msg = ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(prompt)
+                .build()
+                .unwrap(),
+        );
+
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(self.config.model.clone())
+            .messages(vec![msg])
+            .max_tokens(self.config.max_tokens as u16)
+            .temperature(self.config.temperature)
+            .stream(true)
+            .build()
+            .unwrap();
+        let mut stream: async_openai::types::ChatCompletionResponseStream = client
+            .chat()
+            .create_stream(request)
+            .await
+            .map_err(|e: OpenAIError| PluginError::ExecutionFailed(e.to_string()))?;
+        let mut full_response = String::new();
+
+        while let Some(result) = stream.next().await {
+            let response = result.map_err(|e: async_openai::error::OpenAIError| {
+                PluginError::ExecutionFailed(e.to_string())
+            })?;
+            for choice in response.choices {
+                if let Some(content) = choice.delta.content {
+                    callback(content.clone());
+                    full_response.push_str(&content);
+                }
+            }
         }
-        Ok(response)
+
+        //   let response = format!("[{}] Stream response to: {}", self.config.model, prompt);
+        //   let words: Vec<&str> = response.split_whitespace().collect();
+        //   let len = words.len();
+        //   for (i, word) in words.iter().enumerate() {
+        //       let chunk = if i + 1 < len {
+        //          format!("{} ", word) // preserve trailing space between tokens
+        //      } else {
+        //         word.to_string()
+        //     };
+        //     callback(chunk);
+        //     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // }
+        Ok(full_response)
     }
 
     async fn chat(&self, messages: Vec<ChatMessage>) -> PluginResult<String> {
@@ -1658,4 +1710,44 @@ mod tests {
         assert_eq!(config.get_i64("timeout"), Some(30));
         assert_eq!(config.get_bool("enabled"), Some(true));
     }
+
+
+    #[tokio::test]
+    async fn test_openaisse_streaming_response() {
+        // little check for existence of api key
+        let config = LLMPluginConfig::default();
+
+        let api_key = config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| std::env::var("API_KEY").ok());
+        if api_key.is_none() {
+            println!("Skipping Test : Open API Key is not set.");
+            return;
+        }
+
+        let client = OpenAIClient::new(LLMPluginConfig::default());
+
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_clone = chunks.clone();
+
+        client
+            .generate_stream(
+                "Testing Streaming",
+                Box::new(move |chunk| {
+                    chunks_clone.lock().unwrap().push(chunk);
+                }),
+            )
+            .await
+            .unwrap();
+
+        let collected = chunks.lock().unwrap();
+
+        assert!(!collected.is_empty());
+
+        let full = collected.join("");
+        assert!(full.contains("Testing"));
+    }
+
 }
