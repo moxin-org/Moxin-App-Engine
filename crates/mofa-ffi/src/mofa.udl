@@ -332,3 +332,36 @@ interface ToolRegistry {
     [Throws=MoFaError]
     FfiToolResult execute_tool(string name, string arguments_json);
 };
+
+// ============================================================================
+// Swarm Orchestrator Types
+// ============================================================================
+
+// Result from a complete swarm execution.
+//
+// Use execution_id to correlate with OpenTelemetry traces in Jaeger
+// and with the JSONL audit log exported by GovernanceLayer.
+dictionary SwarmResultFFI {
+    string execution_id;
+    string goal;
+    u64 tasks_succeeded;
+    u64 tasks_failed;
+    u64 wall_time_ms;
+};
+
+// High-level entry point that connects a natural-language goal to a coordinated
+// multi-agent execution across all Cognitive Swarm Orchestrator modules:
+//   TaskAnalyzer -> SwarmComposer -> HITLGovernor -> GovernanceLayer
+//   -> Schedulers -> SemanticDiscovery -> SmithObservatory
+//
+// Owns an internal Tokio runtime — callers do not need async support.
+interface SwarmOrchestratorFFI {
+    // Create a new orchestrator.
+    // The name appears in OTel gen_ai.agent.* span attributes and audit log entries.
+    constructor(string name);
+
+    // Run the full swarm pipeline for the given natural-language goal.
+    // Blocks the calling thread until execution completes or fails.
+    [Throws=MoFaError]
+    SwarmResultFFI run_goal(string goal);
+};

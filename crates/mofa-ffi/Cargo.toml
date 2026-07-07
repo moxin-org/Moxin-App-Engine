@@ -16,7 +16,7 @@ publish = true
 [features]
 default = []
 # Enable UniFFI cross-language bindings (Python, Kotlin, Swift, Java)
-uniffi = ["dep:uniffi", "dep:thiserror", "dep:error-stack"]
+uniffi = ["dep:uniffi", "dep:error-stack"]
 # Enable PyO3 Python bindings (native Python extension)
 python = ["dep:pyo3", "dep:pyo3-async-runtimes"]
 # Enable all FFI bindings
@@ -34,7 +34,6 @@ persistence-all = ["mofa-sdk/persistence-all"]
 mofa-sdk = { path = "../mofa-sdk", version = "0.1" }
 mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
 mofa-kernel = { path = "../mofa-kernel", version = "0.1" }
-
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
@@ -45,9 +44,10 @@ serde_json.workspace = true
 uuid.workspace = true
 async-trait = "0.1"
 
+# Always-on: thiserror for MoFaError used across all binding layers
+thiserror = { version = "1.0" }
 # UniFFI dependencies (optional)
 uniffi = { version = "0.29", features = ["bindgen"], optional = true }
-thiserror = { version = "1.0", optional = true }
 error-stack = { workspace = true, optional = true }
 # PyO3 dependencies (optional)
 # Note: extension-module is only for building Python wheels, not for tests

@@ -12,36 +12,9 @@ use tokio::sync::RwLock;
 // Error Types
 // =============================================================================
 
-/// MoFA error type for UniFFI.
-///
-/// Intentionally NOT `#[non_exhaustive]` — UniFFI generates exhaustive matches
-/// across the FFI boundary and requires all variants to be known at compile time.
-///
-/// At the FFI boundary every `error_stack::Report<*>` from internal code is
-/// downcast to the closest `MoFaError` category via [`From`] impls below.
-#[derive(Debug, thiserror::Error)]
-pub enum MoFaError {
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    #[error("Runtime error: {0}")]
-    RuntimeError(String),
-    #[error("LLM error: {0}")]
-    LLMError(String),
-    #[error("IO error: {0}")]
-    IoError(String),
-    #[error("Invalid argument: {0}")]
-    InvalidArgument(String),
-    #[error("Tool error: {0}")]
-    ToolError(String),
-    #[error("Session error: {0}")]
-    SessionError(String),
-}
-
-/// Convenience result alias for UniFFI-exposed functions.
-///
-/// Always `Result<T, MoFaError>` — `error_stack::Report` cannot cross the FFI
-/// boundary. Use the [`From`] impls below to convert internal reports here.
-pub type MoFaResult<T> = Result<T, MoFaError>;
+// MoFaError is defined in crate::error and re-exported at the crate root.
+// Re-import here for use in the From impls below.
+use crate::error::{MoFaError, MoFaResult};
 
 // ── FFI boundary conversions: Report<*> → MoFaError ───────────────────────────
 //

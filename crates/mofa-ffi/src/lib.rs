@@ -45,6 +45,21 @@
 pub use mofa_sdk::*;
 
 // =============================================================================
+// Error types (always compiled; shared by UniFFI and PyO3 layers)
+// =============================================================================
+
+pub mod error;
+pub use error::{MoFaError, MoFaResult};
+
+// =============================================================================
+// Swarm orchestrator FFI wrapper (always compiled — mofa-orchestrator is a
+// direct dep; used by both uniffi and python binding layers below)
+// =============================================================================
+
+pub mod swarm;
+pub use swarm::{SwarmOrchestratorFFI, SwarmResultFFI};
+
+// =============================================================================
 // UniFFI bindings (enabled with `uniffi` feature)
 // =============================================================================
 
