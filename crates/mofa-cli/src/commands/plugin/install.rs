@@ -427,9 +427,34 @@ fn extract_tar_gz(bytes: &[u8], dest_dir: &Path) -> Result<(), CliError> {
     let gz = GzDecoder::new(bytes);
     let mut archive = Archive::new(gz);
 
-    archive
-        .unpack(dest_dir)
-        .map_err(|e| CliError::PluginError(format!("Failed to extract tar.gz archive: {}", e)))?;
+    let entries = archive
+        .entries()
+        .map_err(|e| CliError::PluginError(format!("Failed to read tar.gz entries: {}", e)))?;
+
+    for entry in entries {
+        let mut entry = entry.map_err(|e| {
+            CliError::PluginError(format!("Failed to read tar.gz entry metadata: {}", e))
+        })?;
+        let entry_path = entry
+            .path()
+            .ok()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        let unpacked = entry.unpack_in(dest_dir).map_err(|e| {
+            CliError::PluginError(format!(
+                "Failed to extract tar.gz entry '{}': {}",
+                entry_path, e
+            ))
+        })?;
+
+        if !unpacked {
+            return Err(CliError::PluginError(format!(
+                "Unsafe archive entry escapes destination: {}",
+                entry_path
+            )));
+        }
+    }
 
     Ok(())
 }
@@ -705,5 +730,43 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("empty") || err_msg.contains("Plugin directory"));
+    }
+
+    #[test]
+    fn test_extract_tar_gz_rejects_path_traversal() {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write;
+        use tar::{Builder, Header};
+
+        let temp_dir = TempDir::new().unwrap();
+        let dest_dir = temp_dir.path().join("plugin");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let mut tar_builder = Builder::new(Vec::new());
+        let payload = b"malicious";
+        let mut header = Header::new_gnu();
+        {
+            let old = header.as_old_mut();
+            old.name.fill(0);
+            let path = b"../escape.txt";
+            old.name[..path.len()].copy_from_slice(path);
+        }
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar_builder.append(&header, &payload[..]).unwrap();
+        let tar_bytes = tar_builder.into_inner().unwrap();
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar_bytes).unwrap();
+        let tar_gz_bytes = encoder.finish().unwrap();
+
+        let err = extract_tar_gz(&tar_gz_bytes, &dest_dir).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("Unsafe archive entry escapes destination")
+                || message.contains("must not have `..`")
+        );
+        assert!(!temp_dir.path().join("escape.txt").exists());
     }
 }
