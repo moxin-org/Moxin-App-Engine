@@ -35,6 +35,10 @@ pub enum AuthError {
     #[error("credentials have expired")]
     ExpiredCredentials,
 
+    /// The credential was explicitly revoked.
+    #[error("credentials have been revoked")]
+    RevokedCredentials,
+
     /// The caller's verified claims do not include the scope required to access
     /// this route.
     #[error("insufficient scope: required '{required}'")]
@@ -158,8 +162,9 @@ pub trait AuthProvider: Send + Sync {
 pub trait ApiKeyStore: Send + Sync {
     /// Look up the claims associated with `key`.
     ///
-    /// Returns `None` if the key is not registered or has been revoked.
-    fn lookup(&self, key: &str) -> Option<AuthClaims>;
+    /// Returns `Ok(AuthClaims)` if valid, `Err(AuthError::RevokedCredentials)` if revoked,
+    /// or `Err(AuthError::InvalidCredentials)` if not found.
+    fn lookup(&self, key: &str) -> Result<AuthClaims, AuthError>;
 
     /// Issue a new API key for `subject` with the given `scopes`.
     ///
@@ -326,8 +331,8 @@ mod tests {
     }
 
     impl ApiKeyStore for InMemoryApiKeyStore {
-        fn lookup(&self, key: &str) -> Option<AuthClaims> {
-            self.keys.get(key).cloned()
+        fn lookup(&self, key: &str) -> Result<AuthClaims, AuthError> {
+            self.keys.get(key).cloned().ok_or(AuthError::InvalidCredentials)
         }
 
         fn issue(&mut self, subject: impl Into<String>, scopes: Vec<String>) -> String {
@@ -353,9 +358,9 @@ mod tests {
     }
 
     #[test]
-    fn api_key_store_lookup_missing_returns_none() {
+    fn api_key_store_lookup_missing_returns_error() {
         let store = InMemoryApiKeyStore::new();
-        assert!(store.lookup("nonexistent").is_none());
+        assert!(matches!(store.lookup("nonexistent"), Err(AuthError::InvalidCredentials)));
     }
 
     #[test]
@@ -363,7 +368,7 @@ mod tests {
         let mut store = InMemoryApiKeyStore::new();
         let key = store.issue("agent:a", vec![]);
         assert!(store.revoke(&key));
-        assert!(store.lookup(&key).is_none());
+        assert!(matches!(store.lookup(&key), Err(AuthError::InvalidCredentials)));
     }
 
     #[test]

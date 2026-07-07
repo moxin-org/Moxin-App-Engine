@@ -78,6 +78,10 @@ pub mod recovery;
 // Metrics and telemetry module
 pub mod metrics;
 
+// Gateway layer implementations (AuthProvider, API Key Auth)
+pub mod gateway;
+pub use gateway::{ApiKeyAuthProvider, InMemoryApiKeyStore, TokenBucketRateLimiter};
+
 // Re-export metrics types
 pub use metrics::{
     AgentMetrics, BusinessMetrics, CircuitBreakerEvent, CircuitBreakerMetrics, CircuitBreakerState,
@@ -86,9 +90,7 @@ pub use metrics::{
     TokenUsage, ToolMetrics, WorkflowMetrics,
 };
 
-// Gateway implementations (rate limiter, routing strategies)
-pub mod gateway;
-pub use gateway::TokenBucketRateLimiter;
+
 
 // Re-export config types
 pub use config::{AgentInfo, AgentYamlConfig, LLMYamlConfig, RuntimeConfig, ToolConfig};
