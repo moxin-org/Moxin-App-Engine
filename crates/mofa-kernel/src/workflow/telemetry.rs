@@ -32,6 +32,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::agent::error::AgentResult;
 
@@ -166,6 +167,67 @@ impl DebugEvent {
             Self::NodeEnd { .. } => "node_end",
             Self::WorkflowEnd { .. } => "workflow_end",
             Self::Error { .. } => "error",
+        }
+    }
+}
+
+impl fmt::Display for DebugEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WorkflowStart {
+                workflow_id,
+                execution_id,
+                timestamp_ms,
+            } => write!(
+                f,
+                "[{timestamp_ms}] workflow_start: workflow_id={workflow_id} execution_id={execution_id}"
+            ),
+            Self::NodeStart {
+                node_id,
+                timestamp_ms,
+                ..
+            } => write!(f, "[{timestamp_ms}] node_start: node={node_id}"),
+            Self::StateChange {
+                node_id,
+                timestamp_ms,
+                key,
+                old_value,
+                new_value,
+            } => {
+                let old = old_value
+                    .as_ref()
+                    .map_or_else(|| "<none>".to_string(), std::string::ToString::to_string);
+                write!(
+                    f,
+                    "[{timestamp_ms}] state_change: node={node_id} key={key} {old} -> {new_value}"
+                )
+            }
+            Self::NodeEnd {
+                node_id,
+                timestamp_ms,
+                duration_ms,
+                ..
+            } => write!(
+                f,
+                "[{timestamp_ms}] node_end: node={node_id} duration={duration_ms}ms"
+            ),
+            Self::WorkflowEnd {
+                workflow_id,
+                execution_id,
+                timestamp_ms,
+                status,
+            } => write!(
+                f,
+                "[{timestamp_ms}] workflow_end: workflow_id={workflow_id} execution_id={execution_id} status={status}"
+            ),
+            Self::Error {
+                node_id,
+                timestamp_ms,
+                error,
+            } => {
+                let node = node_id.as_deref().unwrap_or("<global>");
+                write!(f, "[{timestamp_ms}] error: node={node} {error}")
+            }
         }
     }
 }
@@ -489,6 +551,116 @@ mod tests {
             error: "err".to_string(),
         };
         assert_eq!(error_without.node_id(), None);
+    }
+
+    #[test]
+    fn test_debug_event_display_workflow_start() {
+        let event = DebugEvent::WorkflowStart {
+            workflow_id: "wf-1".to_string(),
+            execution_id: "exec-1".to_string(),
+            timestamp_ms: 1700000000000,
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000000000] workflow_start: workflow_id=wf-1 execution_id=exec-1"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_node_start() {
+        let event = DebugEvent::NodeStart {
+            node_id: "process".to_string(),
+            timestamp_ms: 1700000001000,
+            state_snapshot: json!({"count": 0}),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000001000] node_start: node=process"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_state_change_with_old_value() {
+        let event = DebugEvent::StateChange {
+            node_id: "n1".to_string(),
+            timestamp_ms: 1700000002000,
+            key: "count".to_string(),
+            old_value: Some(json!(0)),
+            new_value: json!(1),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000002000] state_change: node=n1 key=count 0 -> 1"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_state_change_without_old_value() {
+        let event = DebugEvent::StateChange {
+            node_id: "n1".to_string(),
+            timestamp_ms: 1700000002001,
+            key: "count".to_string(),
+            old_value: None,
+            new_value: json!(1),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000002001] state_change: node=n1 key=count <none> -> 1"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_node_end() {
+        let event = DebugEvent::NodeEnd {
+            node_id: "process".to_string(),
+            timestamp_ms: 1700000003000,
+            state_snapshot: json!({"count": 1}),
+            duration_ms: 150,
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000003000] node_end: node=process duration=150ms"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_workflow_end() {
+        let event = DebugEvent::WorkflowEnd {
+            workflow_id: "wf-1".to_string(),
+            execution_id: "exec-1".to_string(),
+            timestamp_ms: 1700000004000,
+            status: "completed".to_string(),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000004000] workflow_end: workflow_id=wf-1 execution_id=exec-1 status=completed"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_error_with_node() {
+        let event = DebugEvent::Error {
+            node_id: Some("n2".to_string()),
+            timestamp_ms: 1700000005000,
+            error: "timeout exceeded".to_string(),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000005000] error: node=n2 timeout exceeded"
+        );
+    }
+
+    #[test]
+    fn test_debug_event_display_error_without_node() {
+        let event = DebugEvent::Error {
+            node_id: None,
+            timestamp_ms: 1700000006000,
+            error: "timeout exceeded".to_string(),
+        };
+        assert_eq!(
+            event.to_string(),
+            "[1700000006000] error: node=<global> timeout exceeded"
+        );
     }
 
     #[test]
