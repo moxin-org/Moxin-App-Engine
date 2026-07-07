@@ -4,6 +4,16 @@
     non_camel_case_types,
     ambiguous_glob_reexports
 )]
+// Circuit breaker module
+pub mod circuit_breaker;
+
+// Re-export circuit breaker types
+pub use circuit_breaker::{
+    AgentCircuitBreakerConfig, AsyncCircuitBreaker, CircuitBreaker, CircuitBreakerConfig,
+    CircuitBreakerError, CircuitBreakerMetricsSnapshot, FallbackBuilder, FallbackContext,
+    FallbackError, FallbackHandler, FallbackStrategy, GlobalCircuitBreakerConfig, State,
+    StateTransition, execute_fallback,
+};
 // orchestrator module - Model Lifecycle & Allocation
 pub mod orchestrator;
 
