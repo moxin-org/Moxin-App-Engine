@@ -1137,6 +1137,32 @@ mod tests {
         }
     }
 
+    /// Test node that emits updates and an explicit routing decision.
+    struct RouteNode {
+        name: String,
+        updates: Vec<StateUpdate>,
+        route: String,
+    }
+
+    #[async_trait]
+    impl NodeFunc<JsonState> for RouteNode {
+        async fn call(
+            &self,
+            _state: &mut JsonState,
+            _ctx: &RuntimeContext,
+        ) -> AgentResult<Command> {
+            let mut cmd = Command::new();
+            for update in &self.updates {
+                cmd = cmd.update(update.key.clone(), update.value.clone());
+            }
+            Ok(cmd.route(self.route.clone()).continue_())
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
     struct ConcurrencyProbeNode {
         name: String,
         active: Arc<AtomicUsize>,
@@ -1734,5 +1760,159 @@ mod tests {
             got_error,
             "stream should emit an error event when no conditional route matches"
         );
+    }
+
+    // ── Bug #378 regression tests: route value must take priority over update key ──
+
+    #[tokio::test]
+    async fn test_conditional_routing_uses_route_value_not_update_key() {
+        let mut graph = StateGraphImpl::<JsonState>::new("route_graph");
+
+        graph
+            .add_node(
+                "decide",
+                Box::new(RouteNode {
+                    name: "decide".to_string(),
+                    // This update key collides with a route label and should NOT control routing.
+                    updates: vec![StateUpdate::new("approve", json!(true))],
+                    route: "reject".to_string(),
+                }),
+            )
+            .add_node(
+                "approved",
+                Box::new(TestNode {
+                    name: "approved".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("approved"))],
+                }),
+            )
+            .add_node(
+                "rejected",
+                Box::new(TestNode {
+                    name: "rejected".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("rejected"))],
+                }),
+            )
+            .add_edge(START, "decide")
+            .add_conditional_edges(
+                "decide",
+                HashMap::from([
+                    ("approve".to_string(), "approved".to_string()),
+                    ("reject".to_string(), "rejected".to_string()),
+                ]),
+            )
+            .add_edge("approved", END)
+            .add_edge("rejected", END);
+
+        let compiled = graph.compile().unwrap();
+        let final_state = compiled.invoke(JsonState::new(), None).await.unwrap();
+
+        assert_eq!(final_state.get_value("decision"), Some(json!("rejected")));
+    }
+
+    #[tokio::test]
+    async fn test_conditional_routing_legacy_update_key_fallback() {
+        let mut graph = StateGraphImpl::<JsonState>::new("legacy_route_graph");
+
+        graph
+            .add_node(
+                "decide",
+                Box::new(TestNode {
+                    name: "decide".to_string(),
+                    // No explicit command.route; legacy update key fallback should select this route.
+                    updates: vec![StateUpdate::new("approve", json!(true))],
+                }),
+            )
+            .add_node(
+                "approved",
+                Box::new(TestNode {
+                    name: "approved".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("approved"))],
+                }),
+            )
+            .add_node(
+                "rejected",
+                Box::new(TestNode {
+                    name: "rejected".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("rejected"))],
+                }),
+            )
+            .add_edge(START, "decide")
+            .add_conditional_edges(
+                "decide",
+                HashMap::from([
+                    ("approve".to_string(), "approved".to_string()),
+                    ("reject".to_string(), "rejected".to_string()),
+                ]),
+            )
+            .add_edge("approved", END)
+            .add_edge("rejected", END);
+
+        let compiled = graph.compile().unwrap();
+        let final_state = compiled.invoke(JsonState::new(), None).await.unwrap();
+
+        assert_eq!(
+            final_state.get_value::<serde_json::Value>("decision"),
+            Some(json!("approved"))
+        );
+
+        let mut stream = compiled.stream(JsonState::new(), None);
+        let mut stream_final_state: Option<JsonState> = None;
+        while let Some(event) = stream.next().await {
+            if let Ok(StreamEvent::End { final_state }) = event {
+                stream_final_state = Some(final_state);
+            }
+        }
+
+        let stream_final_state: JsonState =
+            stream_final_state.expect("stream should emit a final end event with state");
+        assert_eq!(
+            stream_final_state.get_value("decision"),
+            Some(json!("approved"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_conditional_routing_empty_route_falls_back_to_legacy_update_key() {
+        let mut graph = StateGraphImpl::<JsonState>::new("empty_route_graph");
+
+        graph
+            .add_node(
+                "decide",
+                Box::new(RouteNode {
+                    name: "decide".to_string(),
+                    // Empty route should not match any conditional edge; fallback should still work.
+                    updates: vec![StateUpdate::new("approve", json!(true))],
+                    route: "".to_string(),
+                }),
+            )
+            .add_node(
+                "approved",
+                Box::new(TestNode {
+                    name: "approved".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("approved"))],
+                }),
+            )
+            .add_node(
+                "rejected",
+                Box::new(TestNode {
+                    name: "rejected".to_string(),
+                    updates: vec![StateUpdate::new("decision", json!("rejected"))],
+                }),
+            )
+            .add_edge(START, "decide")
+            .add_conditional_edges(
+                "decide",
+                HashMap::from([
+                    ("approve".to_string(), "approved".to_string()),
+                    ("reject".to_string(), "rejected".to_string()),
+                ]),
+            )
+            .add_edge("approved", END)
+            .add_edge("rejected", END);
+
+        let compiled = graph.compile().unwrap();
+        let final_state = compiled.invoke(JsonState::new(), None).await.unwrap();
+
+        assert_eq!(final_state.get_value("decision"), Some(json!("approved")));
     }
 }

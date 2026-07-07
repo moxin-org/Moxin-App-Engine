@@ -130,6 +130,15 @@ impl<V> Command<V> {
         }
     }
 
+    /// Set control flow to create parallel branches while preserving builder state.
+    ///
+    /// Unlike [`Command::send`], this keeps any existing updates/route and only
+    /// switches the control-flow directive.
+    pub fn send_to(mut self, targets: Vec<SendCommand<V>>) -> Self {
+        self.control = ControlFlow::Send(targets);
+        self
+    }
+
     /// Create a command that just updates state (continues by default)
     pub fn just_update(key: impl Into<String>, value: V) -> Self {
         Self::new().update(key, value)
@@ -284,5 +293,15 @@ mod tests {
 
         let cmd = Command::<serde_json::Value>::just_return();
         assert!(cmd.is_return());
+    }
+
+    #[test]
+    fn test_send_to_preserves_route() {
+        let cmd = Command::new()
+            .route("approve")
+            .send_to(vec![SendCommand::new("node_a", json!({"task": 1}))]);
+
+        assert_eq!(cmd.route.as_deref(), Some("approve"));
+        assert!(cmd.is_send());
     }
 }
