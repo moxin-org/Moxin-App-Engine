@@ -332,6 +332,9 @@ pub mod vision;
 // Audio processing
 pub mod transcription;
 
+// MLX local backend for macOS
+pub mod mlx_backend;
+
 // Re-export 核心类型
 // Re-export core types
 pub use client::{ChatRequestBuilder, ChatSession, LLMClient, function_tool};
