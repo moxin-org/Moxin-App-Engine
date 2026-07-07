@@ -43,6 +43,12 @@ pub struct SkillMetadata {
     /// Installation instructions
     #[serde(default)]
     pub install: Option<String>,
+    /// Ed25519 signature (base64-encoded) covering the markdown body.
+    #[serde(default)]
+    pub signature: Option<String>,
+    /// Ed25519 public key of the signer (base64-encoded).
+    #[serde(default)]
+    pub signer_key: Option<String>,
 }
 
 /// Skill 版本信息

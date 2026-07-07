@@ -1,7 +1,10 @@
 //! 渐进式披露控制
 //! Progressive disclosure control
 
-use crate::skill::{Requirement, RequirementCheck, metadata::SkillMetadata, parser::SkillParser};
+use crate::skill::{
+    Requirement, RequirementCheck, metadata::SkillMetadata, parser::SkillParser,
+    signature::TrustStore,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -21,6 +24,8 @@ pub struct DisclosureController {
     /// Skill 名称到目录的映射（记录实际来源）
     /// Mapping of skill names to directories (tracking actual source)
     skill_sources: HashMap<String, PathBuf>,
+    /// Cryptographic trust store for signature verification.
+    trust_store: TrustStore,
 }
 
 impl DisclosureController {
@@ -31,6 +36,7 @@ impl DisclosureController {
             search_dirs: vec![skills_dir.into()],
             metadata_cache: HashMap::new(),
             skill_sources: HashMap::new(),
+            trust_store: TrustStore::new(),
         }
     }
 
@@ -46,7 +52,14 @@ impl DisclosureController {
             search_dirs,
             metadata_cache: HashMap::new(),
             skill_sources: HashMap::new(),
+            trust_store: TrustStore::new(),
         }
+    }
+
+    /// Returns a reference to the internal trust store so callers can
+    /// register trusted public keys before scanning.
+    pub fn trust_store(&self) -> &TrustStore {
+        &self.trust_store
     }
 
     /// 查找内置 skills 目录
@@ -127,8 +140,32 @@ impl DisclosureController {
 
                     let skill_md = entry.path().join("SKILL.md");
                     if skill_md.exists()
-                        && let Ok((metadata, _)) = SkillParser::parse_from_file(&skill_md)
+                        && let Ok((metadata, markdown)) =
+                            SkillParser::parse_from_file(&skill_md)
                     {
+                        // ── Signature verification ──────────────────
+                        if let Some(sig) = &metadata.signature {
+                            if let Some(key) = &metadata.signer_key {
+                                if let Err(e) =
+                                    self.trust_store.verify(markdown.trim(), sig, key)
+                                {
+                                    tracing::warn!(
+                                        "Skill '{}' rejected — signature verification failed: {}",
+                                        skill_name,
+                                        e
+                                    );
+                                    continue;
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "Skill '{}' rejected — has signature but no signer_key",
+                                    skill_name
+                                );
+                                continue;
+                            }
+                        }
+                        // ── End verification ────────────────────────
+
                         self.metadata_cache.insert(metadata.name.clone(), metadata);
                         self.skill_sources.insert(skill_name, skills_dir.clone());
                         count += 1;

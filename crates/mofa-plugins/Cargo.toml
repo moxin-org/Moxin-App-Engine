@@ -56,6 +56,8 @@ dirs = "5.0"
 md-5 = "0.10"
 backoff = { version = "0.4", features = ["tokio"] }
 futures = "0.3"
+ed25519-dalek = "2"
+base64 = "0.22"
 
 [lints]
 workspace = true

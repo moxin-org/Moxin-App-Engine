@@ -7,6 +7,7 @@
 pub mod disclosure;
 pub mod metadata;
 pub mod parser;
+pub mod signature;
 
 pub use disclosure::DisclosureController;
 pub use metadata::{
@@ -14,3 +15,4 @@ pub use metadata::{
     SkillVersion,
 };
 pub use parser::SkillParser;
+pub use signature::TrustStore;
