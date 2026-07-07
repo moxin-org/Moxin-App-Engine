@@ -52,6 +52,7 @@ use async_openai::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 /// OpenAI Provider 配置
 /// OpenAI Provider Configuration
@@ -504,6 +505,90 @@ impl OpenAIProvider {
             tool_call_id: None,
         }
     }
+
+    fn should_fallback_for_compatible_deser_error(err: &async_openai::error::OpenAIError) -> bool {
+        let msg = err.to_string();
+        // Detect enum variants returned by compatible backends that async openai rejects.
+        msg.contains("unknown variant `on_demand`")
+            || msg.contains("failed to deserialize api response")
+                && msg.contains("service_tier")
+    }
+
+    fn strip_incompatible_service_tier(value: &mut serde_json::Value) -> bool {
+        value
+            .as_object_mut()
+            .and_then(|obj| obj.remove("service_tier"))
+            .is_some()
+    }
+
+    fn chat_completions_url(&self) -> String {
+        let base = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com/v1");
+        format!("{}/chat/completions", base.trim_end_matches('/'))
+    }
+
+    async fn chat_with_raw_json_fallback(
+        &self,
+        request_json: &serde_json::Value,
+    ) -> LLMResult<ChatCompletionResponse> {
+        let mut headers = HeaderMap::new();
+        let auth_value = HeaderValue::from_str(&format!("Bearer {}", self.config.api_key))
+            .map_err(|e| LLMError::ConfigError(e.to_string()))?;
+        headers.insert(AUTHORIZATION, auth_value);
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        if let Some(org_id) = &self.config.org_id {
+            let org_header = HeaderValue::from_str(org_id)
+                .map_err(|e| LLMError::ConfigError(e.to_string()))?;
+            headers.insert("OpenAI-Organization", org_header);
+        }
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .default_headers(headers)
+            .build()
+            .map_err(|e| LLMError::NetworkError(e.to_string()))?;
+
+        let response = client
+            .post(self.chat_completions_url())
+            .json(request_json)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    LLMError::Timeout(e.to_string())
+                } else {
+                    LLMError::NetworkError(e.to_string())
+                }
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(LLMError::ApiError {
+                code: Some(status.as_u16().to_string()),
+                message: body,
+            });
+        }
+
+        let mut value: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| LLMError::Other(format!("failed to decode fallback response json: {e}")))?;
+
+        // Strip only the known incompatible field and reuse normal conversion.
+        Self::strip_incompatible_service_tier(&mut value);
+
+        let parsed: async_openai::types::CreateChatCompletionResponse =
+            serde_json::from_value(value).map_err(|e| {
+                LLMError::Other(format!("failed to deserialize fallback api response: {e}"))
+            })?;
+
+        Ok(Self::convert_response(parsed))
+    }
 }
 
 #[async_trait]
@@ -629,12 +714,21 @@ impl LLMProvider for OpenAIProvider {
             .build()
             .map_err(|e| LLMError::ConfigError(e.to_string()))?;
 
-        let response = self
-            .client
-            .chat()
-            .create(openai_request)
-            .await
-            .map_err(Self::convert_error)?;
+        // Preserve the exact request for the raw JSON fallback path.
+        let request_json = serde_json::to_value(&openai_request)
+            .map_err(|e| LLMError::ConfigError(e.to_string()))?;
+
+        let response = match self.client.chat().create(openai_request).await {
+            Ok(response) => response,
+            Err(err) if Self::should_fallback_for_compatible_deser_error(&err) => {
+                tracing::warn!(
+                    "OpenAI-compatible response deserialization failed; retrying via raw JSON fallback: {}",
+                    err
+                );
+                return self.chat_with_raw_json_fallback(&request_json).await;
+            }
+            Err(err) => return Err(Self::convert_error(err)),
+        };
 
         Ok(Self::convert_response(response))
     }
@@ -954,6 +1048,22 @@ impl OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_incompatible_service_tier() {
+        let mut value = serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "llama-3.3-70b-versatile",
+            "service_tier": "on_demand",
+            "choices": [],
+            "usage": null
+        });
+
+        assert!(OpenAIProvider::strip_incompatible_service_tier(&mut value));
+        assert!(value.get("service_tier").is_none());
+    }
 
     #[test]
     fn test_config_builder() {
