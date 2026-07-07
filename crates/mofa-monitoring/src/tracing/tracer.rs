@@ -26,6 +26,7 @@ pub enum SamplingStrategy {
     AlwaysOff,
     /// 按概率采样
     /// Probabilistic sampling
+    /// Probability-based sampling where values are expected in `[0.0, 1.0]`.
     Probabilistic(f64),
     /// 基于速率限制采样
     /// Rate-limiting based sampling
@@ -36,6 +37,7 @@ pub enum SamplingStrategy {
     },
     /// 父级决定
     /// Parent-based decision
+    /// Reuse parent sampling decision when available; otherwise evaluate `root`.
     ParentBased { root: Box<SamplingStrategy> },
 }
 
@@ -148,6 +150,7 @@ impl Default for TracerConfig {
 }
 
 impl TracerConfig {
+    /// Create a tracer config for a specific service name.
     pub fn new(service_name: impl Into<String>) -> Self {
         Self {
             service_name: service_name.into(),
@@ -155,16 +158,19 @@ impl TracerConfig {
         }
     }
 
+    /// Attach a semantic service version (e.g. `1.2.3`).
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.service_version = Some(version.into());
         self
     }
 
+    /// Attach deployment environment (e.g. `dev`, `staging`, `prod`).
     pub fn with_environment(mut self, env: impl Into<String>) -> Self {
         self.environment = Some(env.into());
         self
     }
 
+    /// Select which traces are sampled.
     pub fn with_sampling_strategy(mut self, strategy: SamplingStrategy) -> Self {
         self.sampling_strategy = strategy;
         self
@@ -196,6 +202,7 @@ pub struct SimpleSpanProcessor {
 }
 
 impl SimpleSpanProcessor {
+    /// Processor that exports each span immediately on end.
     pub fn new(exporter: Arc<dyn TracingExporter>) -> Self {
         Self { exporter }
     }
@@ -234,6 +241,10 @@ pub struct BatchSpanProcessor {
 }
 
 impl BatchSpanProcessor {
+    /// Processor that buffers spans and exports in batches.
+    ///
+    /// - `batch_size`: export once buffered span count reaches this size.
+    /// - `max_queue_size`: hard cap before additional spans are dropped.
     pub fn new(
         exporter: Arc<dyn TracingExporter>,
         batch_size: usize,

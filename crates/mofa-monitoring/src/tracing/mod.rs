@@ -5,6 +5,26 @@
 //! - Span management
 //! - Multiple exporters (Console, Jaeger, OTLP)
 //! - Automatic tracing for Agents and Workflows
+//!
+//! # Quick Start
+//!
+//! ```rust,ignore
+//! use std::sync::Arc;
+//! use mofa_monitoring::tracing::{
+//!     AgentTracer, ConsoleExporter, SimpleSpanProcessor, Tracer, TracerConfig, TracerProvider,
+//! };
+//!
+//! let exporter = Arc::new(ConsoleExporter::new());
+//! let processor = Arc::new(SimpleSpanProcessor::new(exporter));
+//! let provider = Arc::new(TracerProvider::new(TracerConfig::new("my-agent"), processor));
+//! let tracer = Arc::new(Tracer::new(provider));
+//! let _agent_tracer = AgentTracer::new(tracer);
+//! ```
+//!
+//! # Utility Helpers
+//!
+//! Use `trace_agent_operation` and `trace_workflow_execution` to attach tracing
+//! around custom logic blocks without manually creating and ending spans.
 
 mod context;
 mod exporter;

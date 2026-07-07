@@ -58,6 +58,7 @@ pub enum SpanStatus {
     Ok,
     /// 错误
     /// Error
+    /// Failed operation with human-readable message.
     Error { message: String },
 }
 
@@ -66,13 +67,21 @@ pub enum SpanStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SpanAttribute {
+    /// UTF-8 string attribute value.
     String(String),
+    /// Signed integer attribute value.
     Int(i64),
+    /// Floating-point attribute value.
     Float(f64),
+    /// Boolean attribute value.
     Bool(bool),
+    /// Array of UTF-8 string values.
     StringArray(Vec<String>),
+    /// Array of signed integer values.
     IntArray(Vec<i64>),
+    /// Array of floating-point values.
     FloatArray(Vec<f64>),
+    /// Array of boolean values.
     BoolArray(Vec<bool>),
 }
 
@@ -134,6 +143,7 @@ pub struct SpanEvent {
 }
 
 impl SpanEvent {
+    /// Create a span event using the current UTC timestamp.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -165,6 +175,7 @@ pub struct SpanLink {
 }
 
 impl SpanLink {
+    /// Create a link that associates this span with another span context.
     pub fn new(span_context: SpanContext) -> Self {
         Self {
             span_context,

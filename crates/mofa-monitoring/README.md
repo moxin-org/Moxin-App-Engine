@@ -39,6 +39,29 @@ metrics push exporter:
 mofa-monitoring = { version = "0.1", features = ["otlp-metrics"] }
 ```
 
+Required environment variables for OTLP exporters:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_SERVICE_NAME=mofa-service
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
+
+## Getting Started: AgentTracer Integration
+
+```rust
+use std::sync::Arc;
+use mofa_monitoring::tracing::{
+	AgentTracer, ConsoleExporter, SimpleSpanProcessor, Tracer, TracerConfig, TracerProvider,
+};
+
+let exporter = Arc::new(ConsoleExporter::new());
+let processor = Arc::new(SimpleSpanProcessor::new(exporter));
+let provider = Arc::new(TracerProvider::new(TracerConfig::new("my-agent"), processor));
+let tracer = Arc::new(Tracer::new(provider));
+let _agent_tracer = AgentTracer::new(tracer);
+```
+
 ## Documentation
 
 - [API Documentation](https://docs.rs/mofa-monitoring)
