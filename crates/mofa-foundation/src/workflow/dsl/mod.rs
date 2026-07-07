@@ -38,7 +38,7 @@
 mod env;
 mod parser;
 mod schema;
-
+pub mod validation;
 pub use parser::*;
 pub use schema::*;
 

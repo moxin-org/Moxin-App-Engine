@@ -1,7 +1,7 @@
 //! Workflow DSL Parser
 //!
 //! Parses YAML/TOML workflow definitions and builds executable workflows.
-
+use super::validation::validate_workflow;
 use super::env::substitute_env_recursive;
 use super::schema::*;
 use super::{DslError, DslResult};
@@ -92,67 +92,11 @@ impl WorkflowDslParser {
 
     /// Validate workflow definition
     fn validate(definition: &WorkflowDefinition) -> DslResult<()> {
-        // Check for required nodes
-        let node_ids: Vec<&str> = definition.nodes.iter().map(|n| n.id()).collect();
-
-        // Verify start node exists
-        if !node_ids.iter().any(|&id| {
-            definition
-                .nodes
-                .iter()
-                .any(|n| matches!(n, NodeDefinition::Start { id: start_id, .. } if start_id == id))
-        }) {
-            return Err(DslError::Validation(
-                "Workflow must have a start node".to_string(),
-            ));
-        }
-
-        // Verify end node exists
-        if !node_ids.iter().any(|&id| {
-            definition
-                .nodes
-                .iter()
-                .any(|n| matches!(n, NodeDefinition::End { id: end_id, .. } if end_id == id))
-        }) {
-            return Err(DslError::Validation(
-                "Workflow must have an end node".to_string(),
-            ));
-        }
-
-        // Verify all edge references are valid
-        for edge in &definition.edges {
-            if !node_ids.contains(&edge.from.as_str()) {
-                return Err(DslError::InvalidEdge {
-                    from: edge.from.clone(),
-                    to: edge.to.clone(),
-                });
-            }
-            if !node_ids.contains(&edge.to.as_str()) {
-                return Err(DslError::InvalidEdge {
-                    from: edge.from.clone(),
-                    to: edge.to.clone(),
-                });
-            }
-        }
-
-        // Verify agent references
-        for node in &definition.nodes {
-            if let NodeDefinition::LlmAgent { agent, .. } = node {
-                match agent {
-                    AgentRef::Registry { agent_id } => {
-                        if !definition.agents.contains_key(agent_id) {
-                            return Err(DslError::AgentNotFound(agent_id.clone()));
-                        }
-                    }
-                    AgentRef::Inline(_) => {
-                        // Inline agents are self-contained
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    if let Err(errors) = validate_workflow(definition) {
+        return Err(DslError::Validation(format!("{:?}", errors)));
     }
+    Ok(())
+}
 
     /// Add a node to the workflow builder
     async fn add_node(
