@@ -388,6 +388,17 @@ pub struct CompiledGraphImpl<S: GraphState> {
     telemetry: Option<Arc<dyn TelemetryEmitter>>,
 }
 
+impl<S: GraphState> std::fmt::Debug for CompiledGraphImpl<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompiledGraphImpl")
+            .field("id", &self.id)
+            .field("node_count", &self.nodes.len())
+            .field("edge_count", &self.edges.len())
+            .field("entry_point", &self.entry_point)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<S: GraphState> CompiledGraphImpl<S> {
     /// Attach a telemetry emitter for checkpoint events during invocation.
     pub fn with_telemetry(mut self, telemetry: Arc<dyn TelemetryEmitter>) -> Self {

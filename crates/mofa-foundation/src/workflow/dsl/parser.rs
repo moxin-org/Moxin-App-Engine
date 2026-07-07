@@ -31,8 +31,8 @@ impl WorkflowDslParser {
     pub fn from_toml(content: &str) -> DslResult<WorkflowDefinition> {
         let value: toml::Value = toml::from_str(content)?;
         // Convert to JSON for env substitution
-        let json_value: serde_json::Value = serde_json::to_value(&value)
-            .map_err(|e| DslError::Validation(format!("TOML to JSON conversion error: {}", e)))?;
+        let json_value: serde_json::Value =
+            serde_json::to_value(&value).map_err(|_| DslError::TomlToJsonConversion)?;
         let substituted = substitute_env_recursive(&json_value);
         let def: WorkflowDefinition = serde_json::from_value(substituted)?;
         Ok(def)
@@ -43,18 +43,14 @@ impl WorkflowDslParser {
         let path = path.as_ref();
         let content = fs::read_to_string(path)?;
 
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .ok_or_else(|| DslError::Validation("No file extension".to_string()))?;
+        let extension = path.extension().ok_or(DslError::MissingFileExtension)?;
 
-        match extension.to_lowercase().as_str() {
+        match extension.to_string_lossy().to_lowercase().as_str() {
             "yaml" | "yml" => Self::from_yaml(&content),
             "toml" => Self::from_toml(&content),
-            _ => Err(DslError::Validation(format!(
-                "Unsupported file extension: {}",
-                extension
-            ))),
+            _ => Err(DslError::UnsupportedFileExtension(
+                extension.to_string_lossy().into_owned(),
+            )),
         }
     }
 
@@ -96,27 +92,21 @@ impl WorkflowDslParser {
         let node_ids: Vec<&str> = definition.nodes.iter().map(|n| n.id()).collect();
 
         // Verify start node exists
-        if !node_ids.iter().any(|&id| {
-            definition
-                .nodes
-                .iter()
-                .any(|n| matches!(n, NodeDefinition::Start { id: start_id, .. } if start_id == id))
-        }) {
-            return Err(DslError::Validation(
-                "Workflow must have a start node".to_string(),
-            ));
+        if !definition
+            .nodes
+            .iter()
+            .any(|n| matches!(n, NodeDefinition::Start { .. }))
+        {
+            return Err(DslError::MissingStartNode);
         }
 
         // Verify end node exists
-        if !node_ids.iter().any(|&id| {
-            definition
-                .nodes
-                .iter()
-                .any(|n| matches!(n, NodeDefinition::End { id: end_id, .. } if end_id == id))
-        }) {
-            return Err(DslError::Validation(
-                "Workflow must have an end node".to_string(),
-            ));
+        if !definition
+            .nodes
+            .iter()
+            .any(|n| matches!(n, NodeDefinition::End { .. }))
+        {
+            return Err(DslError::MissingEndNode);
         }
 
         // Verify all edge references are valid
@@ -177,7 +167,7 @@ impl WorkflowDslParser {
                         builder = builder.task(&id, &name, |_ctx, input| async move { Ok(input) });
                     }
                     _ => {
-                        return Err(DslError::Validation(
+                        return Err(DslError::InvalidNodeType(
                             "Only 'none' executor type is currently supported for task nodes"
                                 .to_string(),
                         ));
@@ -242,7 +232,7 @@ impl WorkflowDslParser {
                     );
                 }
                 _ => {
-                    return Err(DslError::Validation(
+                    return Err(DslError::InvalidNodeType(
                         "Loop body executor not supported yet".to_string(),
                     ));
                 }

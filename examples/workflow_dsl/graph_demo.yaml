@@ -1,0 +1,86 @@
+# DslCompiler Graph Demo
+#
+# This workflow demonstrates advanced DslCompiler features:
+# 1. External Agent Registry: Uses agents defined and built in Rust.
+# 2. Value-based Conditions: Uses a condition node to route based on input values.
+# 3. Explicit Routing: Shows how "true"/"false" results from conditions drive branching.
+
+metadata:
+  id: graph_demo
+  name: DslCompiler Graph Demo
+  description: Comprehensive demo for declarative Graph execution
+
+# Registry-based agents
+agents:
+  expert:
+    model: gpt-4
+    system_prompt: "You are a domain expert. Provide concise, accurate information."
+  reviewer:
+    model: gpt-4
+    system_prompt: "You are a critical reviewer. Evaluate the provided information for accuracy and clarity."
+
+nodes:
+  - type: start
+    id: start
+
+  - type: task
+    id: preprocess
+    name: Preprocess Input
+    executor_type: none
+
+  - type: condition
+    id: check_complex
+    name: check_complexity
+    condition:
+      condition_type: value
+      field: complexity
+      operator: ">"
+      value: 5
+
+  - type: llm_agent
+    id: expert_analysis
+    name: Expert Analysis
+    agent:
+      agent_id: expert
+    prompt_template: "Analyze this topic in depth: {{ input }}"
+
+  - type: llm_agent
+    id: simple_response
+    name: Simple Response
+    agent:
+      agent_id: expert
+    prompt_template: "Provide a quick overview of: {{ input }}"
+
+  - type: llm_agent
+    id: final_review
+    name: Final Review
+    agent:
+      agent_id: reviewer
+    prompt_template: "Review the following analysis: {{ expert_analysis }}"
+
+  - type: end
+    id: end
+
+edges:
+  - from: start
+    to: preprocess
+
+  - from: preprocess
+    to: check_complex
+
+  - from: check_complex
+    to: expert_analysis
+    condition: "true"
+
+  - from: check_complex
+    to: simple_response
+    condition: "false"
+
+  - from: expert_analysis
+    to: final_review
+
+  - from: simple_response
+    to: end
+
+  - from: final_review
+    to: end

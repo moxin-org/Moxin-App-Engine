@@ -3,10 +3,10 @@
 //! Demonstrates how to use the workflow DSL to define and execute workflows
 //! using YAML configuration files through the mofa-sdk.
 
-use mofa_sdk::llm::{LLMAgent, LLMAgentBuilder};
+use mofa_sdk::llm::{LLMAgent, LLMAgentBuilder, MockLLMProvider};
 use mofa_sdk::workflow::{
-    ExecutorConfig, LlmAgentConfig, WorkflowDefinition, WorkflowDslParser,
-    WorkflowExecutor, WorkflowValue,
+    CompiledGraph, DslCompiler, GraphState, JsonState, LlmAgentConfig, WorkflowDefinition,
+    WorkflowDslParser,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,17 +47,17 @@ async fn run_customer_support() -> Result<(), Box<dyn std::error::Error>> {
     let agent_registry = build_mock_agents(&definition).await?;
 
     // Build workflow from definition
-    let workflow = WorkflowDslParser::build_with_agents(definition, &agent_registry).await?;
-    info!("Built workflow with {} nodes", workflow.node_count());
+    let compiled = DslCompiler::compile_with_agents(definition, &agent_registry)?;
+    info!("Built workflow successfully");
 
     // Execute workflow
-    let executor = WorkflowExecutor::new(ExecutorConfig::default());
-    let input = WorkflowValue::String("I was charged twice for my subscription".to_string());
+    let mut state = JsonState::new();
+    state.apply_update("input", serde_json::json!("I was charged twice for my subscription")).await?;
 
-    info!("Executing workflow with input: {}", input.as_str().unwrap_or(""));
-    let result = executor.execute(&workflow, input).await;
+    info!("Executing workflow with input: I was charged twice for my subscription");
+    let result = compiled.invoke(state, None).await?;
 
-    info!("Workflow result: {:?}", result);
+    info!("Workflow final state: {:?}", result);
 
     Ok(())
 }
@@ -78,20 +78,17 @@ async fn run_parallel_agents() -> Result<(), Box<dyn std::error::Error>> {
     let agent_registry = build_mock_agents(&definition).await?;
 
     // Build workflow from definition
-    let workflow = WorkflowDslParser::build_with_agents(definition, &agent_registry).await?;
-    info!("Built workflow with {} nodes", workflow.node_count());
+    let compiled = DslCompiler::compile_with_agents(definition, &agent_registry)?;
+    info!("Built workflow successfully");
 
     // Execute workflow
-    let executor = WorkflowExecutor::new(ExecutorConfig::default());
-    let input = WorkflowValue::String(
-        "The new product launch exceeded expectations with strong customer adoption."
-            .to_string(),
-    );
+    let mut state = JsonState::new();
+    state.apply_update("input", serde_json::json!("The new product launch exceeded expectations with strong customer adoption.")).await?;
 
-    info!("Executing workflow with input: {}", input.as_str().unwrap_or(""));
-    let result = executor.execute(&workflow, input).await;
+    info!("Executing workflow with input: The new product launch exceeded expectations with strong customer adoption.");
+    let result = compiled.invoke(state, None).await?;
 
-    info!("Workflow result: {:?}", result);
+    info!("Workflow final state: {:?}", result);
 
     Ok(())
 }
@@ -133,19 +130,19 @@ async fn build_mock_agents(
                     builder = builder.with_max_tokens(max_tokens);
                 }
 
-                Arc::new(builder.build_async().await?)
+                Ok(Arc::new(builder.build_async().await))
             }
 
             #[cfg(not(feature = "openai"))]
             {
-                build_mock_agent(agent_id, config).await?
+                build_mock_agent(agent_id, config)
             }
         } else {
             // Build mock agent without actual LLM
-            build_mock_agent(agent_id, config).await?
-        };
+            build_mock_agent(agent_id, config)
+        }?;
 
-        registry.insert(agent_id.clone(), agent);
+        registry.insert(agent_id.to_string(), agent);
         info!("Registered agent: {}", agent_id);
     }
 
@@ -157,7 +154,7 @@ async fn build_mock_agents(
 /// This creates a simple agent that returns predefined responses
 /// based on the agent type. In production, use actual LLMAgent with
 /// configured providers.
-async fn build_mock_agent(
+fn build_mock_agent(
     agent_id: &str,
     config: &LlmAgentConfig,
 ) -> Result<Arc<LLMAgent>, Box<dyn std::error::Error>> {
@@ -167,17 +164,19 @@ async fn build_mock_agent(
         config.model
     );
 
-    // For demonstration, we'll build a simple agent
-    // In production, you would configure an actual LLM provider
+    let provider = Arc::new(
+        MockLLMProvider::new("mock-provider")
+            .with_default_response(format!("Mock response from {}", agent_id)),
+    );
+
     let mut builder = LLMAgentBuilder::new()
         .with_id(agent_id)
-        .with_name(&format!("Mock {}", agent_id));
+        .with_name(&format!("Mock {}", agent_id))
+        .with_provider(provider);
 
     if let Some(prompt) = &config.system_prompt {
         builder = builder.with_system_prompt(prompt);
     }
 
-    // Note: This won't actually work without a provider
-    // It's here to demonstrate the API structure
-    Ok(Arc::new(builder.build_async().await))
+    Ok(Arc::new(builder.build()))
 }
