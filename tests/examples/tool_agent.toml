@@ -1,0 +1,27 @@
+name = "tool_agent_run"
+input = "Use the echo tool and summarize the result."
+
+[agent]
+name = "ToolAgent"
+description = "Agent used to validate tool-aware DSL execution."
+
+[[tools]]
+name = "echo_tool"
+description = "Echo the provided input."
+schema = { type = "object", properties = { input = { type = "string" } }, required = ["input"] }
+result = "echoed from tool"
+
+[assert]
+contains = "Tool execution complete"
+tool_called = "echo_tool"
+
+[llm]
+
+[[llm.steps]]
+type = "tool_call"
+tool = "echo_tool"
+arguments = { input = "ping" }
+
+[[llm.steps]]
+type = "text"
+content = "Tool execution complete"

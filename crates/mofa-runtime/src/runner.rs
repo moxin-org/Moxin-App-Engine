@@ -349,6 +349,11 @@ impl<T: MoFAAgent> AgentRunner<T> {
         &self.context
     }
 
+    /// Update session ID in the execution context.
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.context.session_id = session_id;
+    }
+
     /// 获取运行器状态
     /// Get runner state
     pub async fn state(&self) -> RunnerState {

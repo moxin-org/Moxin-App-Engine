@@ -1,0 +1,11 @@
+name = "simple_agent_record"
+prompt = "hello"
+
+[llm]
+record_tape = "../fixtures/simple_agent_recorded.tape.json"
+
+[llm.provider]
+kind = "open_ai_compatible"
+base_url = "https://api.groq.com/openai/v1"
+model = "openai/gpt-oss-120b"
+api_key_env = "GROQ_API_KEY"

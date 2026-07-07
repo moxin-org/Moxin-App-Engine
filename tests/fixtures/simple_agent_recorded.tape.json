@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "case_name": "simple_agent_record",
+  "interactions": [
+    {
+      "request": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "#  Agent A helpful AI assistant\n\nYou are Agent, A helpful AI assistant.\n\n## Current Time\n2026-04-04 14:22 (Saturday)\n\n## Workspace\nYour workspace is at: /tmp/mofa-agent-test-019d58df-5e39-7920-a62f-c328e6970edb\n- Memory files: /tmp/mofa-agent-test-019d58df-5e39-7920-a62f-c328e6970edb/memory/MEMORY.md\n- Daily notes: /tmp/mofa-agent-test-019d58df-5e39-7920-a62f-c328e6970edb/memory/YYYY-MM-DD.md\n- Custom skills: /tmp/mofa-agent-test-019d58df-5e39-7920-a62f-c328e6970edb/skills/{{skill-name}}/SKILL.md\n\nAlways be helpful, accurate, and concise. When using tools, explain what you're doing.\nWhen remembering something, write to /tmp/mofa-agent-test-019d58df-5e39-7920-a62f-c328e6970edb/memory/MEMORY.md",
+            "tool_call_id": null,
+            "tool_calls": []
+          },
+          {
+            "role": "user",
+            "content": "hello",
+            "tool_call_id": null,
+            "tool_calls": []
+          }
+        ],
+        "model": null,
+        "temperature": null,
+        "max_tokens": null,
+        "tool_names": []
+      },
+      "response": "Hello. It's nice to meet you. Is there something I can help you with or would you like to chat?",
+      "tool_calls": [],
+      "usage": {
+        "prompt_tokens": 284,
+        "completion_tokens": 25,
+        "total_tokens": 309
+      }
+    }
+  ]
+}

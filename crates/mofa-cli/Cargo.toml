@@ -25,6 +25,7 @@ mofa-kernel = { path = "../mofa-kernel", version = "0.1", features = [
 ] }
 mofa-runtime = { path = "../mofa-runtime", version = "0.1" }
 mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
+mofa-testing = { path = "../../tests", version = "0.1" }
 config.workspace = true
 tokio = { workspace = true }
 thiserror = { workspace = true }
@@ -90,6 +91,7 @@ tokio-stream = "0.1"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+axum = { workspace = true }
 
 [features]
 default = []

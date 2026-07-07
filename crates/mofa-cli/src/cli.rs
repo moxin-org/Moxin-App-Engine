@@ -81,6 +81,40 @@ pub enum Commands {
         dora: bool,
     },
 
+    /// Run a testing DSL case file
+    TestDsl {
+        /// TOML DSL file to execute
+        file: PathBuf,
+
+        /// Optional canonical artifact file path
+        #[arg(long)]
+        artifact_out: Option<PathBuf>,
+
+        /// Optional report file path
+        #[arg(long)]
+        report_out: Option<PathBuf>,
+
+        /// Compare the current artifact against a saved baseline artifact
+        #[arg(long)]
+        baseline_in: Option<PathBuf>,
+
+        /// Write the current artifact to a baseline file
+        #[arg(long)]
+        baseline_out: Option<PathBuf>,
+
+        /// Write machine-readable comparison output (requires --baseline-in)
+        #[arg(long)]
+        comparison_out: Option<PathBuf>,
+
+        /// Exit non-zero when baseline comparison mismatches
+        #[arg(long)]
+        fail_on_diff: bool,
+
+        /// Report file format
+        #[arg(long, value_enum, default_value_t = TestDslReportFormat::Json)]
+        report_format: TestDslReportFormat,
+    },
+
     /// Run a dora dataflow
     #[cfg(feature = "dora")]
     Dataflow {
@@ -256,6 +290,12 @@ pub enum DatabaseType {
     Mysql,
     /// SQLite database
     Sqlite,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum TestDslReportFormat {
+    Json,
+    Text,
 }
 
 impl std::fmt::Display for DatabaseType {
@@ -762,6 +802,77 @@ mod tests {
             ".",
         ]);
         assert!(parsed.is_ok(), "doctor ci strict json should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_parses() {
+        let parsed = Cli::try_parse_from(["mofa", "test-dsl", "tests/examples/simple_agent.toml"]);
+        assert!(parsed.is_ok(), "test-dsl command should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_report_flags_parse() {
+        let parsed = Cli::try_parse_from([
+            "mofa",
+            "test-dsl",
+            "tests/examples/simple_agent.toml",
+            "--report-out",
+            "/tmp/report.json",
+            "--report-format",
+            "json",
+        ]);
+        assert!(parsed.is_ok(), "test-dsl report flags should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_artifact_flag_parses() {
+        let parsed = Cli::try_parse_from([
+            "mofa",
+            "test-dsl",
+            "tests/examples/simple_agent.toml",
+            "--artifact-out",
+            "/tmp/artifact.json",
+        ]);
+        assert!(parsed.is_ok(), "test-dsl artifact flag should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_baseline_flags_parse() {
+        let parsed = Cli::try_parse_from([
+            "mofa",
+            "test-dsl",
+            "tests/examples/simple_agent.toml",
+            "--baseline-in",
+            "/tmp/baseline.json",
+            "--baseline-out",
+            "/tmp/new-baseline.json",
+        ]);
+        assert!(parsed.is_ok(), "test-dsl baseline flags should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_comparison_flag_parse() {
+        let parsed = Cli::try_parse_from([
+            "mofa",
+            "test-dsl",
+            "tests/examples/simple_agent.toml",
+            "--baseline-in",
+            "/tmp/baseline.json",
+            "--comparison-out",
+            "/tmp/comparison.json",
+        ]);
+        assert!(parsed.is_ok(), "test-dsl comparison flag should parse");
+    }
+
+    #[test]
+    fn test_test_dsl_fail_on_diff_flag_parse() {
+        let parsed = Cli::try_parse_from([
+            "mofa",
+            "test-dsl",
+            "tests/examples/simple_agent.toml",
+            "--fail-on-diff",
+        ]);
+        assert!(parsed.is_ok(), "test-dsl fail-on-diff flag should parse");
     }
 
     #[test]

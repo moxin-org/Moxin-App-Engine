@@ -1,0 +1,8 @@
+name = "simple_agent_run"
+prompt = "hello"
+
+[llm]
+tape = "../fixtures/simple_agent.tape.json"
+
+[assert]
+contains = "hello from tape"

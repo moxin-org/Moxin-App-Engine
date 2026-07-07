@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "case_name": "simple_agent_run",
+  "interactions": [
+    { "response": "hello from tape" }
+  ]
+}
