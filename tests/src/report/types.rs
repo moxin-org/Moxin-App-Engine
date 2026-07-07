@@ -1,14 +1,29 @@
 //! Core data types for test reports.
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Outcome of a single test case.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TestStatus {
     Passed,
     Failed,
     Skipped,
+}
+
+impl TestStatus {
+    pub fn is_passed(&self) -> bool {
+        matches!(self, Self::Passed)
+    }
+
+    pub fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed)
+    }
+
+    pub fn is_skipped(&self) -> bool {
+        matches!(self, Self::Skipped)
+    }
 }
 
 impl std::fmt::Display for TestStatus {
@@ -22,22 +37,44 @@ impl std::fmt::Display for TestStatus {
 }
 
 /// Result of a single test case execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestCaseResult {
     pub name: String,
     pub status: TestStatus,
+    #[serde(with = "duration_millis")]
     pub duration: Duration,
     pub error: Option<String>,
     pub metadata: Vec<(String, String)>,
 }
 
 /// Aggregated report for a test suite.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestReport {
     pub suite_name: String,
     pub results: Vec<TestCaseResult>,
+    #[serde(with = "duration_millis")]
     pub total_duration: Duration,
     pub timestamp: u64,
+}
+
+mod duration_millis {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(d: &Duration, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_u64(d.as_millis() as u64)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ms = u64::deserialize(d)?;
+        Ok(Duration::from_millis(ms))
+    }
 }
 
 impl TestReport {
