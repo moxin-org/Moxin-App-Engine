@@ -107,6 +107,48 @@ impl BudgetStatus {
         })
     }
 
+    pub fn remaining_session_tokens(&self) -> Option<u64> {
+        self.config
+            .max_tokens_per_session
+            .map(|max| max.saturating_sub(self.session_tokens))
+    }
+
+    pub fn remaining_daily_tokens(&self) -> Option<u64> {
+        self.config
+            .max_tokens_per_day
+            .map(|max| max.saturating_sub(self.daily_tokens))
+    }
+
+    pub fn daily_cost_usage_ratio(&self) -> Option<f64> {
+        self.config.max_cost_per_day.map(|max| {
+            if max > 0.0 {
+                self.daily_cost / max
+            } else {
+                1.0
+            }
+        })
+    }
+
+    pub fn session_tokens_usage_ratio(&self) -> Option<f64> {
+        self.config.max_tokens_per_session.map(|max| {
+            if max > 0 {
+                self.session_tokens as f64 / max as f64
+            } else {
+                1.0
+            }
+        })
+    }
+
+    pub fn daily_tokens_usage_ratio(&self) -> Option<f64> {
+        self.config.max_tokens_per_day.map(|max| {
+            if max > 0 {
+                self.daily_tokens as f64 / max as f64
+            } else {
+                1.0
+            }
+        })
+    }
+
     pub fn is_exceeded(&self) -> bool {
         if let Some(max) = self.config.max_cost_per_session
             && self.session_cost >= max
@@ -230,5 +272,70 @@ mod tests {
                 .unwrap(),
         };
         assert!((status.remaining_session_cost().unwrap() - 7.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_remaining_session_tokens() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(1000)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 0.0, 750, 0, config);
+        assert_eq!(status.remaining_session_tokens(), Some(250));
+    }
+
+    #[test]
+    fn test_remaining_daily_tokens() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_day(5000)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 0.0, 0, 4200, config);
+        assert_eq!(status.remaining_daily_tokens(), Some(800));
+    }
+
+    #[test]
+    fn test_remaining_tokens_saturating() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(100)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 0.0, 150, 0, config);
+        assert_eq!(status.remaining_session_tokens(), Some(0));
+    }
+
+    #[test]
+    fn test_daily_cost_usage_ratio() {
+        let config = BudgetConfig::default()
+            .with_max_cost_per_day(10.0)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 5.0, 0, 0, config);
+        assert!((status.daily_cost_usage_ratio().unwrap() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_session_tokens_usage_ratio() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(1000)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 0.0, 250, 0, config);
+        assert!((status.session_tokens_usage_ratio().unwrap() - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_daily_tokens_usage_ratio() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_day(5000)
+            .unwrap();
+        let status = BudgetStatus::new(0.0, 0.0, 0, 3000, config);
+        assert!((status.daily_tokens_usage_ratio().unwrap() - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_unlimited_returns_none() {
+        let config = BudgetConfig::unlimited();
+        let status = BudgetStatus::new(5.0, 10.0, 500, 1000, config);
+        assert_eq!(status.remaining_session_tokens(), None);
+        assert_eq!(status.remaining_daily_tokens(), None);
+        assert!(status.daily_cost_usage_ratio().is_none());
+        assert!(status.session_tokens_usage_ratio().is_none());
+        assert!(status.daily_tokens_usage_ratio().is_none());
     }
 }
