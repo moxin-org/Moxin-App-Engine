@@ -1,0 +1,17 @@
+[package]
+name = "coordination_demo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+uuid.workspace = true
+
+# Local dependency on the kernel traits we want to demonstrate
+mofa-kernel = { path = "../../crates/mofa-kernel" }
+
+# Workspace dependencies
+tokio.workspace = true
+

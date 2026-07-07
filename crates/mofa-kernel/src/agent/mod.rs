@@ -143,6 +143,10 @@ pub mod types;
 // Component modules
 pub mod components;
 
+// 协调模块
+// Coordination module
+pub mod coordination;
+
 // 配置模块
 // Configuration modules
 pub mod config;
@@ -183,6 +187,11 @@ pub use core::{
     AgentMessaging,
     AgentPluginSupport,
     MoFAAgent,
+};
+pub use coordination::{
+    AgentMemory, ConflictDetector, ConflictInfo, CoordinationError, CoordinationGovernor,
+    CoordinationResult, GovernanceConfig, HandoffContext, HandoffPacket, HandoffProtocol,
+    MemoryObject, MemoryRef, ResolutionStrategy,
 };
 pub use error::{AgentError, AgentReport, AgentResult, IntoAgentReport};
 pub use traits::{AgentMetadata, AgentStats, DynAgent, HealthStatus};
