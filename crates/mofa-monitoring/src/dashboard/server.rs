@@ -18,6 +18,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 use mofa_kernel::workflow::telemetry::{DebugEvent, SessionRecorder};
+use mofa_kernel::metrics::LLMMetricsSource;
 
 use super::api::create_api_router;
 use super::assets::{INDEX_HTML, serve_asset};
@@ -182,6 +183,22 @@ impl DashboardServer {
     /// Get the metrics collector
     pub fn collector(&self) -> Arc<MetricsCollector> {
         self.collector.clone()
+    }
+
+    /// Configure a real LLM metrics source (e.g., persistence-backed store).
+    ///
+    /// This replaces the internal collector with one that pulls LLM metrics
+    /// from the provided source while keeping the existing metrics config.
+    pub fn with_llm_metrics_source(
+        mut self,
+        source: Arc<dyn LLMMetricsSource>,
+        provider_name: impl Into<String>,
+    ) -> Self {
+        // Rebuild collector so LLM metrics are pulled from an external source.
+        let collector = MetricsCollector::new(self.config.metrics_config.clone())
+            .with_llm_metrics_source(source, provider_name.into());
+        self.collector = Arc::new(collector);
+        self
     }
 
     /// Get the WebSocket handler (if started)

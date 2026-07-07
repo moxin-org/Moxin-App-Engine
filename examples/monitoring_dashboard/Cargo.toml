@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 # Local dependencies
-mofa-sdk = { path = "../../crates/mofa-sdk",features = ["monitoring"] }
+mofa-sdk = { path = "../../crates/mofa-sdk", features = ["monitoring", "persistence-sqlite"] }
 
 # Workspace dependencies
 serde_json.workspace = true

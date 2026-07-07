@@ -41,6 +41,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 const OTHER_LABEL_VALUE: &str = "__other__";
+const MOFA_METRICS_CONTRACT_VERSION: &str = "v1alpha1";
+const MAX_CARDINALITY_LIMIT_PER_DIMENSION: usize = 1_000;
 
 /// Cardinality limits for exported label dimensions.
 #[derive(Debug, Clone)]
@@ -97,14 +99,27 @@ pub struct PrometheusExportConfig {
     pub refresh_interval: Duration,
     /// Label cardinality limits.
     pub cardinality: CardinalityLimits,
+    /// Exported metrics-contract version marker.
+    pub contract_version: String,
+    /// Emit OTel-aligned GenAI alias metrics in addition to mofa_* metrics.
+    pub enable_otel_genai_aliases: bool,
 }
 
 impl Default for PrometheusExportConfig {
     fn default() -> Self {
+        // Environment level rollout control while keeping safe defaults.
+        let contract_version = read_contract_version_from_env()
+            .unwrap_or_else(|_| MOFA_METRICS_CONTRACT_VERSION.to_string());
+        let enable_otel_genai_aliases = read_otel_aliases_from_env()
+            .unwrap_or(true);
+
         Self {
             refresh_interval: Duration::from_secs(1),
             cardinality: CardinalityLimits::default(),
+            contract_version,
+            enable_otel_genai_aliases,
         }
+        .validate()
     }
 }
 
@@ -118,12 +133,53 @@ impl PrometheusExportConfig {
         self.cardinality = sanitize_cardinality_limits(cardinality);
         self
     }
+
+    pub fn with_contract_version(mut self, version: impl Into<String>) -> Self {
+        self.contract_version = sanitize_contract_version(version.into());
+        self
+    }
+
+    pub fn with_otel_genai_aliases(mut self, enabled: bool) -> Self {
+        self.enable_otel_genai_aliases = enabled;
+        self
+    }
+
+    /// Apply all supported environment-variable overrides.
+    pub fn with_env_overrides(mut self) -> Self {
+        if let Ok(version) = read_contract_version_from_env() {
+            self.contract_version = version;
+        }
+        self = self.with_otel_genai_aliases_from_env();
+        self
+    }
+
+    /// Apply OTel alias toggle from environment when present.
+    pub fn with_otel_genai_aliases_from_env(mut self) -> Self {
+        if let Some(enabled) = read_otel_aliases_from_env() {
+            self.enable_otel_genai_aliases = enabled;
+        }
+        self
+    }
+
+    /// Normalize and clamp all config fields to safe values.
+    pub fn validate(mut self) -> Self {
+        self.refresh_interval = sanitize_refresh_interval(self.refresh_interval);
+        self.cardinality = sanitize_cardinality_limits(self.cardinality.clone());
+        self.contract_version = sanitize_contract_version(self.contract_version);
+        self
+    }
 }
 
 fn sanitize_limit(limit: usize, name: &str) -> usize {
     if limit == 0 {
         warn!("{name} cardinality limit was 0; clamping to 1");
         1
+    } else if limit > MAX_CARDINALITY_LIMIT_PER_DIMENSION {
+        warn!(
+            "{name} cardinality limit {} exceeds max {}; clamping",
+            limit, MAX_CARDINALITY_LIMIT_PER_DIMENSION
+        );
+        MAX_CARDINALITY_LIMIT_PER_DIMENSION
     } else {
         limit
     }
@@ -146,6 +202,43 @@ fn sanitize_refresh_interval(refresh_interval: Duration) -> Duration {
     } else {
         refresh_interval
     }
+}
+
+fn sanitize_contract_version(version: String) -> String {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        warn!(
+            "PrometheusExportConfig::with_contract_version received empty value; defaulting to {}",
+            MOFA_METRICS_CONTRACT_VERSION
+        );
+        MOFA_METRICS_CONTRACT_VERSION.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn parse_bool_env(raw: String) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => {
+            warn!(
+                "invalid boolean env value '{}' for MOFA_METRICS_ENABLE_OTEL_ALIASES; using default",
+                raw
+            );
+            None
+        }
+    }
+}
+
+fn read_contract_version_from_env() -> Result<String, std::env::VarError> {
+    std::env::var("MOFA_METRICS_CONTRACT_VERSION").map(sanitize_contract_version)
+}
+
+fn read_otel_aliases_from_env() -> Option<bool> {
+    std::env::var("MOFA_METRICS_ENABLE_OTEL_ALIASES")
+        .ok()
+        .and_then(parse_bool_env)
 }
 
 /// Errors returned by the Prometheus exporter lifecycle.
@@ -450,10 +543,17 @@ impl PrometheusExporter {
     ) -> String {
         let mut out = String::with_capacity(16 * 1024);
 
+        render_contract_info(&mut out, &self.config.contract_version);
         render_agent_metrics(&mut out, snapshot, &self.config.cardinality, dropped);
         render_workflow_metrics(&mut out, snapshot, &self.config.cardinality, dropped);
         render_plugin_metrics(&mut out, snapshot, &self.config.cardinality, dropped);
-        render_llm_metrics(&mut out, snapshot, &self.config.cardinality, dropped);
+        render_llm_metrics(
+            &mut out,
+            snapshot,
+            &self.config.cardinality,
+            dropped,
+            self.config.enable_otel_genai_aliases,
+        );
         render_system_metrics(&mut out, snapshot);
         render_custom_metrics(&mut out, snapshot);
 
@@ -476,6 +576,14 @@ impl PrometheusExporter {
             "Rolling distribution of LLM request duration in seconds",
             &latency.llm_request,
         );
+        if self.config.enable_otel_genai_aliases {
+            render_labeled_histogram_store(
+                &mut out,
+                "gen_ai_client_operation_duration_seconds",
+                "OTel-aligned rolling distribution of GenAI operation duration in seconds",
+                &latency.llm_request,
+            );
+        }
 
         out
     }
@@ -558,6 +666,22 @@ impl PrometheusExporter {
             last_refresh_unix_seconds,
         );
     }
+}
+
+// Emit the contract version marker so dashboards/alerts can pin schema expectations.
+fn render_contract_info(out: &mut String, contract_version: &str) {
+    write_metric_header(
+        out,
+        "mofa_metrics_contract_info",
+        "MoFA Prometheus metrics contract version",
+        "gauge",
+    );
+    append_gauge_line(
+        out,
+        "mofa_metrics_contract_info",
+        &[("version".to_string(), contract_version.to_string())],
+        1.0,
+    );
 }
 
 #[derive(Clone)]
@@ -978,6 +1102,7 @@ fn render_llm_metrics(
     snapshot: &MetricsSnapshot,
     limits: &CardinalityLimits,
     dropped: &mut DroppedSeriesCounters,
+    emit_otel_genai_aliases: bool,
 ) {
     let mut requests = Vec::with_capacity(snapshot.llm_metrics.len());
     let mut tokens_per_second = Vec::with_capacity(snapshot.llm_metrics.len());
@@ -1111,12 +1236,13 @@ fn render_llm_metrics(
         "Cumulative prompt tokens sent to the LLM provider",
         "counter",
     );
-    for series in limit_series(
+    let limited_input_tokens = limit_series(
         input_tokens,
         limits.provider_model,
         &mut dropped.provider_model,
         OverflowAggregation::Sum,
-    ) {
+    );
+    for series in &limited_input_tokens {
         append_gauge_line(
             out,
             "mofa_llm_input_tokens_total",
@@ -1131,18 +1257,39 @@ fn render_llm_metrics(
         "Cumulative completion tokens received from the LLM provider",
         "counter",
     );
-    for series in limit_series(
+    let limited_output_tokens = limit_series(
         output_tokens,
         limits.provider_model,
         &mut dropped.provider_model,
         OverflowAggregation::Sum,
-    ) {
+    );
+    for series in &limited_output_tokens {
         append_gauge_line(
             out,
             "mofa_llm_output_tokens_total",
             &series.labels,
             series.sample_value,
         );
+    }
+
+    if emit_otel_genai_aliases {
+        // OTel-aligned alias: unify token usage with a token_type label dimension.
+        write_metric_header(
+            out,
+            "gen_ai_client_token_usage_total",
+            "Cumulative GenAI token usage grouped by token_type",
+            "counter",
+        );
+        for series in &limited_input_tokens {
+            let mut labels = series.labels.clone();
+            labels.push(("token_type".to_string(), "input".to_string()));
+            append_gauge_line(out, "gen_ai_client_token_usage_total", &labels, series.sample_value);
+        }
+        for series in &limited_output_tokens {
+            let mut labels = series.labels.clone();
+            labels.push(("token_type".to_string(), "output".to_string()));
+            append_gauge_line(out, "gen_ai_client_token_usage_total", &labels, series.sample_value);
+        }
     }
 
     write_metric_header(
@@ -1560,7 +1707,32 @@ mod tests {
         assert!(output.contains("# HELP mofa_agent_tasks_total"));
         assert!(output.contains("# TYPE mofa_agent_tasks_total counter"));
         assert!(output.contains("mofa_agent_tasks_total{agent_id=\"agent-1\"} 42"));
+        assert!(output.contains("# HELP mofa_metrics_contract_info"));
+        assert!(
+            output.contains("mofa_metrics_contract_info{version=\"v1alpha1\"} 1"),
+            "expected contract version marker in exported payload"
+        );
+        assert!(output.contains("# HELP gen_ai_client_operation_duration_seconds"));
         assert!(output.contains("# HELP mofa_system_cpu_percent"));
+    }
+
+    #[tokio::test]
+    async fn renders_configured_contract_version_marker() {
+        let collector = Arc::new(MetricsCollector::new(Default::default()));
+        seed_collector_from_snapshot(&collector, sample_snapshot()).await;
+
+        let exporter = PrometheusExporter::new(
+            collector,
+            PrometheusExportConfig::default().with_contract_version("v9beta2"),
+        );
+        exporter.refresh_once().await.expect("refresh");
+        let output = exporter.render_cached().await;
+        let output = std::str::from_utf8(output.as_ref()).expect("utf8");
+
+        assert!(
+            output.contains("mofa_metrics_contract_info{version=\"v9beta2\"} 1"),
+            "expected configured contract version marker; output was:\n{output}"
+        );
     }
 
     #[tokio::test]
@@ -1586,6 +1758,7 @@ mod tests {
                     agent_id: 2,
                     ..Default::default()
                 },
+                ..Default::default()
             },
         );
 
@@ -1645,6 +1818,7 @@ mod tests {
                     plugin_or_tool: 0,
                     provider_model: 0,
                 },
+                ..Default::default()
             },
         );
         exporter.refresh_once().await.expect("refresh");
@@ -1812,6 +1986,39 @@ mod tests {
     }
 
     #[test]
+    fn empty_contract_version_defaults() {
+        let config = PrometheusExportConfig::default().with_contract_version("   ");
+        assert_eq!(config.contract_version, MOFA_METRICS_CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn cardinality_limits_are_clamped_to_safety_maximum() {
+        let config = PrometheusExportConfig::default().with_cardinality(CardinalityLimits {
+            agent_id: usize::MAX,
+            workflow_id: usize::MAX,
+            plugin_or_tool: usize::MAX,
+            provider_model: usize::MAX,
+        });
+
+        assert_eq!(
+            config.cardinality.agent_id,
+            MAX_CARDINALITY_LIMIT_PER_DIMENSION
+        );
+        assert_eq!(
+            config.cardinality.workflow_id,
+            MAX_CARDINALITY_LIMIT_PER_DIMENSION
+        );
+        assert_eq!(
+            config.cardinality.plugin_or_tool,
+            MAX_CARDINALITY_LIMIT_PER_DIMENSION
+        );
+        assert_eq!(
+            config.cardinality.provider_model,
+            MAX_CARDINALITY_LIMIT_PER_DIMENSION
+        );
+    }
+
+    #[test]
     fn custom_metric_name_collisions_are_disambiguated() {
         let mut snapshot = sample_snapshot();
         snapshot
@@ -1839,7 +2046,7 @@ mod tests {
         let mut output = String::new();
         let limits = CardinalityLimits::default();
         let mut dropped = DroppedSeriesCounters::default();
-        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped);
+        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped, true);
 
         assert!(
             output.contains("# HELP mofa_llm_input_tokens_total"),
@@ -1868,7 +2075,7 @@ mod tests {
         let mut output = String::new();
         let limits = CardinalityLimits::default();
         let mut dropped = DroppedSeriesCounters::default();
-        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped);
+        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped, true);
 
         assert!(
             output.contains("# HELP mofa_llm_output_tokens_total"),
@@ -1898,7 +2105,7 @@ mod tests {
         let mut output = String::new();
         let limits = CardinalityLimits::default();
         let mut dropped = DroppedSeriesCounters::default();
-        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped);
+        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped, true);
 
         assert!(
             output.contains("# HELP mofa_llm_time_to_first_token_seconds"),
@@ -1910,6 +2117,64 @@ mod tests {
                 "mofa_llm_time_to_first_token_seconds{provider=\"openai\",model=\"gpt-4\"} 0.042"
             ),
             "wrong value for time_to_first_token; output was:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_render_llm_otel_token_usage_alias_exported() {
+        let mut snapshot = sample_snapshot();
+        snapshot.llm_metrics = vec![super::super::metrics::LLMMetrics {
+            provider_name: "openai".to_string(),
+            model_name: "gpt-4".to_string(),
+            prompt_tokens: 100,
+            completion_tokens: 25,
+            ..Default::default()
+        }];
+        let mut output = String::new();
+        let limits = CardinalityLimits::default();
+        let mut dropped = DroppedSeriesCounters::default();
+        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped, true);
+
+        assert!(
+            output.contains("# HELP gen_ai_client_token_usage_total"),
+            "missing HELP line for OTel token usage alias; output was:\n{output}"
+        );
+        assert!(
+            output.contains("# TYPE gen_ai_client_token_usage_total counter"),
+            "missing TYPE line for OTel token usage alias; output was:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "gen_ai_client_token_usage_total{provider=\"openai\",model=\"gpt-4\",token_type=\"input\"} 100"
+            ),
+            "missing input token alias line; output was:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "gen_ai_client_token_usage_total{provider=\"openai\",model=\"gpt-4\",token_type=\"output\"} 25"
+            ),
+            "missing output token alias line; output was:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_render_llm_without_otel_aliases() {
+        let mut snapshot = sample_snapshot();
+        snapshot.llm_metrics = vec![super::super::metrics::LLMMetrics {
+            provider_name: "openai".to_string(),
+            model_name: "gpt-4".to_string(),
+            prompt_tokens: 100,
+            completion_tokens: 25,
+            ..Default::default()
+        }];
+        let mut output = String::new();
+        let limits = CardinalityLimits::default();
+        let mut dropped = DroppedSeriesCounters::default();
+        render_llm_metrics(&mut output, &snapshot, &limits, &mut dropped, false);
+
+        assert!(
+            !output.contains("gen_ai_client_token_usage_total"),
+            "OTel alias should be disabled; output was:\n{output}"
         );
     }
 }
