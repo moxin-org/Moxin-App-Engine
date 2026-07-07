@@ -145,16 +145,65 @@ impl OpenAIClient {
 #[async_trait::async_trait]
 impl LLMClient for OpenAIClient {
     async fn generate(&self, prompt: &str) -> PluginResult<String> {
-        // 模拟实现，实际应调用 OpenAI API
-        // Mock implementation, should call OpenAI API in reality
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PluginError::InitFailed("api_key not configured".into()))?;
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com");
+
         debug!(
-            "OpenAI generating response for prompt: {}...",
+            "OpenAI generate: model={}, prompt={}...",
+            self.config.model,
             &prompt[..prompt.len().min(50)]
         );
-        Ok(format!(
-            "[{}] Generated response to: {}",
-            self.config.model, prompt
-        ))
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .build()
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "stream": false
+        });
+
+        let resp = client
+            .post(format!("{}/v1/chat/completions", base_url))
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(PluginError::ExecutionFailed(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        debug!("OpenAI generate: received {} chars", content.len());
+        Ok(content)
     }
 
     async fn generate_stream(
@@ -162,43 +211,224 @@ impl LLMClient for OpenAIClient {
         prompt: &str,
         callback: Box<dyn Fn(String) + Send + Sync>,
     ) -> PluginResult<String> {
-        // 模拟流式生成 TODO
-        // Mock stream generation TODO
-        // Stub: simulates word-level streaming with inter-token spacing.
-        // Replace with a real SSE/delta streaming call (e.g. via `async-openai`)
-        // once live credentials and an HTTP client are wired in.
-        let response = format!("[{}] Stream response to: {}", self.config.model, prompt);
-        let words: Vec<&str> = response.split_whitespace().collect();
-        let len = words.len();
-        for (i, word) in words.iter().enumerate() {
-            let chunk = if i + 1 < len {
-                format!("{} ", word) // preserve trailing space between tokens
-            } else {
-                word.to_string()
-            };
-            callback(chunk);
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        use futures::StreamExt;
+
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PluginError::InitFailed("api_key not configured".into()))?;
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com");
+
+        debug!(
+            "OpenAI generate_stream: model={}, prompt={}...",
+            self.config.model,
+            &prompt[..prompt.len().min(50)]
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .build()
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "stream": true
+        });
+
+        let resp = client
+            .post(format!("{}/v1/chat/completions", base_url))
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(PluginError::ExecutionFailed(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
         }
-        Ok(response)
+
+        // Parse the Server-Sent Events (SSE) stream.
+        // Each event line has the form:  data: <json>
+        // The stream ends with:          data: [DONE]
+        let mut full_response = String::new();
+        let mut byte_stream = resp.bytes_stream();
+        let mut line_buf = String::new();
+
+        while let Some(chunk) = byte_stream.next().await {
+            let bytes = chunk.map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+            // Lossy conversion: invalid UTF-8 sequences (sometimes from some compatible APIs)
+            // are replaced with U+FFFD rather than failing the whole stream.
+            line_buf.push_str(&String::from_utf8_lossy(&bytes));
+
+            // Process every complete newline-terminated SSE line.
+            while let Some(newline_pos) = line_buf.find('\n') {
+                let raw_line = line_buf[..newline_pos].trim_end_matches('\r').to_string();
+                line_buf.drain(..=newline_pos);
+
+                if let Some(data) = raw_line.strip_prefix("data: ") {
+                    if data == "[DONE]" {
+                        break;
+                    }
+                    // Extract delta content token; skip malformed lines silently.
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(token) = json["choices"][0]["delta"]["content"].as_str() {
+                            if !token.is_empty() {
+                                callback(token.to_string());
+                                full_response.push_str(token);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "OpenAI generate_stream: streamed {} chars total",
+            full_response.len()
+        );
+        Ok(full_response)
     }
 
     async fn chat(&self, messages: Vec<ChatMessage>) -> PluginResult<String> {
-        let last_message = messages.last().map(|m| m.content.as_str()).unwrap_or("");
-        debug!("OpenAI chat with {} messages", messages.len());
-        Ok(format!(
-            "[{}] Chat response to: {}",
-            self.config.model, last_message
-        ))
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PluginError::InitFailed("api_key not configured".into()))?;
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com");
+
+        debug!(
+            "OpenAI chat: model={}, {} messages",
+            self.config.model,
+            messages.len()
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .build()
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        // Convert ChatMessage vec to the OpenAI messages JSON array.
+        let api_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
+            .collect();
+
+        let body = serde_json::json!({
+            "model": self.config.model,
+            "messages": api_messages,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "stream": false
+        });
+
+        let resp = client
+            .post(format!("{}/v1/chat/completions", base_url))
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(PluginError::ExecutionFailed(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok(content)
     }
 
     async fn embedding(&self, text: &str) -> PluginResult<Vec<f32>> {
-        // 模拟嵌入向量
-        // Mock embedding vector
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PluginError::InitFailed("api_key not configured".into()))?;
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://api.openai.com");
+
         debug!(
-            "OpenAI generating embedding for text: {}...",
+            "OpenAI embedding: model=text-embedding-ada-002, text={}...",
             &text[..text.len().min(50)]
         );
-        Ok(vec![0.1, 0.2, 0.3, 0.4, 0.5])
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .build()
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        let body = serde_json::json!({
+            "model": "text-embedding-ada-002",
+            "input": text
+        });
+
+        let resp = client
+            .post(format!("{}/v1/embeddings", base_url))
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(PluginError::ExecutionFailed(format!(
+                "HTTP {}: {}",
+                status, err_body
+            )));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PluginError::ExecutionFailed(e.to_string()))?;
+
+        // Extract the embedding vector from data[0].embedding.
+        let embedding: Vec<f32> = json["data"][0]["embedding"]
+            .as_array()
+            .ok_or_else(|| {
+                PluginError::ExecutionFailed("embedding field missing or not an array".into())
+            })?
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect();
+
+        Ok(embedding)
     }
 }
 
@@ -1364,13 +1594,46 @@ impl PluginManager {
 mod tests {
     use super::*;
 
+    // -------------------------------------------------------------------------
+    // A simple mock LLM client for use in plugin lifecycle tests.
+    // It echoes the prompt back so tests can assert on the response content
+    // without needing a real API key or network connection.
+    // -------------------------------------------------------------------------
+    struct MockLLMClient;
+
+    #[async_trait::async_trait]
+    impl LLMClient for MockLLMClient {
+        async fn generate(&self, prompt: &str) -> PluginResult<String> {
+            Ok(format!("[mock] {}", prompt))
+        }
+
+        async fn generate_stream(
+            &self,
+            prompt: &str,
+            callback: Box<dyn Fn(String) + Send + Sync>,
+        ) -> PluginResult<String> {
+            let response = format!("[mock] {}", prompt);
+            callback(response.clone());
+            Ok(response)
+        }
+
+        async fn chat(&self, messages: Vec<ChatMessage>) -> PluginResult<String> {
+            let last = messages.last().map(|m| m.content.as_str()).unwrap_or("");
+            Ok(format!("[mock] {}", last))
+        }
+
+        async fn embedding(&self, _text: &str) -> PluginResult<Vec<f32>> {
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+    }
+
     #[tokio::test]
     async fn test_plugin_manager() {
         let manager = PluginManager::new("test_agent");
 
-        // 注册 LLM 插件
-        // Register LLM plugin
-        let llm = LLMPlugin::new("llm_001");
+        // Register LLM plugin — inject MockLLMClient so the test does not
+        // require a real API key or network connection.
+        let llm = LLMPlugin::new("llm_001").with_client(MockLLMClient);
         manager.register(llm).await.unwrap();
 
         // 注册存储插件
@@ -1425,7 +1688,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_llm_plugin() {
-        let mut llm = LLMPlugin::new("llm_test");
+        // Inject MockLLMClient so this lifecycle test does not need a real
+        // API key. The client is set before load/init to bypass init_plugin's
+        // default OpenAIClient creation.
+        let mut llm = LLMPlugin::new("llm_test").with_client(MockLLMClient);
         let ctx = PluginContext::new("test_agent");
 
         llm.load(&ctx).await.unwrap();
@@ -1649,7 +1915,6 @@ mod tests {
         let value: Option<i32> = ctx.get_state("counter").await;
         assert_eq!(value, Some(42));
 
-        // 测试配置
         // Test configuration
         let mut config = PluginConfig::new();
         config.set("timeout", 30);
@@ -1657,5 +1922,214 @@ mod tests {
 
         assert_eq!(config.get_i64("timeout"), Some(30));
         assert_eq!(config.get_bool("enabled"), Some(true));
+    }
+}
+
+// ============================================================================
+// OpenAIClient unit tests
+// Tests for the real HTTP-backed LLMClient implementation.
+// All tests in this module are fully offline — wiremock spins up a local server.
+// ============================================================================
+#[cfg(test)]
+mod openai_client_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // Build a minimal LLMPluginConfig pointing at the given mock server URI.
+    fn test_config(base_url: String) -> LLMPluginConfig {
+        LLMPluginConfig {
+            model: "gpt-3.5-turbo".to_string(),
+            api_key: Some("test-api-key".to_string()),
+            base_url: Some(base_url),
+            max_tokens: 100,
+            temperature: 0.7,
+            timeout_secs: 10,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 1: generate() and generate_stream() return Err when api_key is None.
+    // No network call should be attempted.
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    async fn test_openai_client_missing_api_key_returns_err() {
+        let config = LLMPluginConfig {
+            api_key: None,
+            ..Default::default()
+        };
+        let client = OpenAIClient::new(config);
+
+        let gen_result = client.generate("hello").await;
+        assert!(
+            gen_result.is_err(),
+            "generate() must fail when api_key is None"
+        );
+        assert!(
+            gen_result.unwrap_err().to_string().contains("api_key"),
+            "error message should mention api_key"
+        );
+
+        let stream_result = client.generate_stream("hello", Box::new(|_| {})).await;
+        assert!(
+            stream_result.is_err(),
+            "generate_stream() must fail when api_key is None"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 2: generate_stream() correctly:
+    //   - connects to the (mocked) endpoint
+    //   - calls the callback once per delta token
+    //   - returns the fully accumulated string
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    async fn test_generate_stream_real_sse_accumulates_chunks() {
+        let server = MockServer::start().await;
+
+        // A minimal two-token SSE stream followed by [DONE].
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAIClient::new(test_config(server.uri()));
+
+        // Use Arc<Mutex<>> so the closure satisfies Fn (not FnMut) while still
+        // collecting tokens. The trait signature requires Fn, not FnMut.
+        let received_chunks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let chunks_for_cb = received_chunks.clone();
+
+        let result = client
+            .generate_stream(
+                "Say hello",
+                Box::new(move |chunk| {
+                    chunks_for_cb.lock().unwrap().push(chunk);
+                }),
+            )
+            .await
+            .expect("generate_stream should succeed against the mock server");
+
+        let final_chunks = received_chunks.lock().unwrap().clone();
+        assert_eq!(result, "Hello world", "accumulated response must match");
+        assert_eq!(
+            final_chunks,
+            vec!["Hello", " world"],
+            "callback must be called once per SSE delta token"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 3: generate() correctly extracts choices[0].message.content from a
+    // standard non-streaming chat completion response.
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    async fn test_generate_non_streaming_returns_content() {
+        let server = MockServer::start().await;
+
+        let response_body = serde_json::json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "42 is the answer."},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
+            .mount(&server)
+            .await;
+
+        let client = OpenAIClient::new(test_config(server.uri()));
+
+        let result = client
+            .generate("What is the answer?")
+            .await
+            .expect("generate should succeed against the mock server");
+
+        assert_eq!(result, "42 is the answer.");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 4: Non-2xx HTTP status codes are propagated as Err(ExecutionFailed).
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    async fn test_openai_client_http_error_propagated() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_string("{\"error\":{\"message\":\"Incorrect API key\"}}"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OpenAIClient::new(test_config(server.uri()));
+
+        let result = client.generate("hello").await;
+        assert!(result.is_err(), "generate() must return Err on HTTP 401");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("401"),
+            "error message should contain the HTTP status code, got: {err_msg}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 5: Live round-trip against a real OpenAI-compatible endpoint.
+    // Marked #[ignore] — never runs in CI.
+    // Run manually:
+    //   $env:OPENAI_API_KEY="sk-..."
+    //   cargo test -p mofa-plugins test_live_openai_stream -- --ignored --nocapture
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    #[ignore = "requires OPENAI_API_KEY env var and live network access"]
+    async fn test_live_openai_stream() {
+        let api_key =
+            std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set to run this test");
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com".to_string());
+
+        let config = LLMPluginConfig {
+            model: "gpt-3.5-turbo".to_string(),
+            api_key: Some(api_key),
+            base_url: Some(base_url),
+            max_tokens: 32,
+            temperature: 0.0,
+            timeout_secs: 30,
+        };
+        let client = OpenAIClient::new(config);
+
+        // Use Arc<Mutex<>> so the closure satisfies Fn (not FnMut) while collecting.
+        let chunks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let chunks_for_cb = chunks.clone();
+
+        let full = client
+            .generate_stream(
+                "Reply with exactly: Hello from MoFA",
+                Box::new(move |c| {
+                    print!("{c}");
+                    chunks_for_cb.lock().unwrap().push(c);
+                }),
+            )
+            .await
+            .expect("live stream must succeed");
+
+        println!("\nFull response: {full}");
+        assert!(!full.is_empty(), "live response must not be empty");
+        assert!(
+            !chunks.lock().unwrap().is_empty(),
+            "at least one chunk must be received"
+        );
     }
 }

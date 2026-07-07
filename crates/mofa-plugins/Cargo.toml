@@ -60,6 +60,10 @@ futures = "0.3"
 [lints]
 workspace = true
 
+[dev-dependencies]
+# HTTP mock server for offline unit tests — not compiled into the final binary.
+wiremock = "0.6"
+
 [features]
 default = []
 rodio = ["dep:rodio"]
