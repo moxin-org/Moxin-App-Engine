@@ -66,6 +66,10 @@ pub mod agent_executor;
 pub mod schema_validator;
 pub use agent_executor::{AgentExecutor, ExecutorError};
 pub use schema_validator::{SchemaError, SchemaValidator};
+
+// middleware module
+pub mod middleware;
+
 // Security governance - PII redaction, content moderation, prompt guard
 pub mod security;
 
