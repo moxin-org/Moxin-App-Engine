@@ -437,14 +437,17 @@ impl<S: GraphState> CompiledGraphImpl<S> {
             let node_id = node_id.clone();
             let sem = semaphore.clone();
 
-            join_set.spawn(async move {
-                // Acquire semaphore permit to enforce max_parallelism
-                let _permit = sem.acquire().await.map_err(|_| {
-                    AgentError::Internal("Parallelism semaphore closed".to_string())
-                })?;
-                let command = node.call(&mut isolated_state, &node_ctx).await?;
-                Ok::<(usize, String, Command), AgentError>((index, node_id, command))
-            });
+            join_set.spawn(
+                async move {
+                    // Acquire semaphore permit to enforce max_parallelism
+                    let _permit = sem.acquire().await.map_err(|_| {
+                        AgentError::Internal("Parallelism semaphore closed".to_string())
+                    })?;
+                    let command = node.call(&mut isolated_state, &node_ctx).await?;
+                    Ok::<(usize, String, Command), AgentError>((index, node_id, command))
+                }
+                .instrument(tracing::Span::current()),
+            );
         }
 
         let mut ordered_results: Vec<Option<(String, Command)>> = vec![None; node_ids.len()];
@@ -537,6 +540,13 @@ impl<S: GraphState> CompiledGraphImpl<S> {
     }
 
     async fn invoke_with_context(&self, input: S, ctx: RuntimeContext) -> AgentResult<S> {
+        let span = tracing::info_span!(
+            "workflow.invoke",
+            graph_id = %self.id,
+            execution_id = %ctx.execution_id
+        );
+
+        async {
         info!(
             "Starting graph execution '{}' with execution_id={}",
             self.id, ctx.execution_id
@@ -644,6 +654,7 @@ impl<S: GraphState> CompiledGraphImpl<S> {
 
         info!("Graph '{}' execution completed", self.id);
         Ok(state)
+        }.instrument(span).await
     }
 }
 
