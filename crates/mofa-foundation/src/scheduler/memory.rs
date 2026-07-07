@@ -164,7 +164,7 @@ impl MemoryScheduler {
     /// Call [`allocate`](Self::allocate) after an `Accept` decision to reserve memory.
     pub fn evaluate(&self, required_mb: u64) -> AdmissionDecision {
         let current = self.budget.used_mb();
-        let projected = current + required_mb;
+        let projected = current.saturating_add(required_mb);
         let available = self.budget.available_mb();
 
         if projected > self.policy.reject_threshold_mb() {
@@ -295,5 +295,31 @@ impl MemoryScheduler {
     /// Get the policy reference.
     pub fn policy(&self) -> &MemoryPolicy {
         &self.policy
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_scheduler_evaluate_overflow() {
+        // Set up a budget of 16GB
+        let mut scheduler = MemoryScheduler::with_capacity(16_384);
+        
+        // Use up 8GB
+        assert!(scheduler.allocate(8192));
+        assert_eq!(scheduler.used_mb(), 8192);
+
+        // Try to allocate an obscenely large amount that would overflow u64
+        // If the code uses `current + required_mb` (unchecked), `8192 + (u64::MAX - 100)`
+        // would overflow to 8091. This is less than the defer/reject thresholds, so it would
+        // incorrectly return `Accept` or `Defer`.
+        let attack_size = u64::MAX - 100;
+        
+        let decision = scheduler.evaluate(attack_size);
+        
+        // It should correctly saturate at u64::MAX and reject the massive request
+        assert_eq!(decision.outcome, AdmissionOutcome::Reject);
     }
 }
