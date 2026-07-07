@@ -50,8 +50,7 @@ pub trait LLMClient: Send + Sync {
     async fn generate_stream(
         &self,
         prompt: &str,
-        callback: Box<dyn Fn(String) + Send + Sync>,
-    ) -> PluginResult<String>;
+    ) -> PluginResult<tokio::sync::mpsc::Receiver<PluginResult<String>>>;
 
     /// 聊天完成
     /// Chat completion
@@ -160,26 +159,29 @@ impl LLMClient for OpenAIClient {
     async fn generate_stream(
         &self,
         prompt: &str,
-        callback: Box<dyn Fn(String) + Send + Sync>,
-    ) -> PluginResult<String> {
-        // 模拟流式生成 TODO
-        // Mock stream generation TODO
-        // Stub: simulates word-level streaming with inter-token spacing.
-        // Replace with a real SSE/delta streaming call (e.g. via `async-openai`)
-        // once live credentials and an HTTP client are wired in.
-        let response = format!("[{}] Stream response to: {}", self.config.model, prompt);
-        let words: Vec<&str> = response.split_whitespace().collect();
-        let len = words.len();
-        for (i, word) in words.iter().enumerate() {
-            let chunk = if i + 1 < len {
-                format!("{} ", word) // preserve trailing space between tokens
-            } else {
-                word.to_string()
-            };
-            callback(chunk);
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        Ok(response)
+    ) -> PluginResult<tokio::sync::mpsc::Receiver<PluginResult<String>>> {
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let model = self.config.model.clone();
+        let prompt_str = prompt.to_string();
+
+        tokio::spawn(async move {
+            let response = format!("[{}] Stream response to: {}", model, prompt_str);
+            let words: Vec<String> = response.split_whitespace().map(String::from).collect();
+            let len = words.len();
+            for (i, word) in words.iter().enumerate() {
+                let chunk = if i + 1 < len {
+                    format!("{} ", word)
+                } else {
+                    word.clone()
+                };
+                if tx.send(Ok(chunk)).await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+
+        Ok(rx)
     }
 
     async fn chat(&self, messages: Vec<ChatMessage>) -> PluginResult<String> {
