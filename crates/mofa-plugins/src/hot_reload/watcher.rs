@@ -55,6 +55,23 @@ impl WatchEvent {
     }
 }
 
+/// Handle a `RenameMode::From` event, checking for an orphaned previous path.
+///
+/// If `rename_from` already holds a path (meaning a prior From was never
+/// paired with a To), that path is treated as a removal and returned as a
+/// `WatchEvent`. The new path then replaces it.
+fn handle_rename_from(rename_from: &mut Option<PathBuf>, new_path: PathBuf) -> Option<WatchEvent> {
+    let orphan_event = rename_from.take().map(|orphaned| {
+        warn!(
+            "Orphaned rename-from path, treating as removal: {:?}",
+            orphaned
+        );
+        WatchEvent::new(WatchEventKind::Removed, orphaned)
+    });
+    *rename_from = Some(new_path);
+    orphan_event
+}
+
 /// Watch configuration
 #[derive(Debug, Clone)]
 pub struct WatchConfig {
@@ -318,7 +335,12 @@ impl PluginWatcher {
                                     Some(WatchEvent::new(WatchEventKind::Removed, path.clone()))
                                 }
                                 EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
-                                    rename_from = Some(path.clone());
+                                    if let Some(evt) = handle_rename_from(&mut rename_from, path.clone()) {
+                                        if event_tx.send(evt).await.is_err() {
+                                            error!("Failed to send watch event");
+                                            return;
+                                        }
+                                    }
                                     None
                                 }
                                 EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
@@ -459,5 +481,48 @@ mod tests {
 
         assert!(watcher.take_event_receiver().is_some());
         assert!(watcher.take_event_receiver().is_none()); // Can only take once
+    }
+
+    #[test]
+    fn test_handle_rename_from_no_previous() {
+        let mut state: Option<PathBuf> = None;
+        let result = handle_rename_from(&mut state, PathBuf::from("/tmp/a.so"));
+        assert!(result.is_none(), "no orphan event when rename_from is empty");
+        assert_eq!(state, Some(PathBuf::from("/tmp/a.so")));
+    }
+
+    #[test]
+    fn test_handle_rename_from_orphaned_previous() {
+        let mut state = Some(PathBuf::from("/tmp/old.so"));
+        let result = handle_rename_from(&mut state, PathBuf::from("/tmp/new.so"));
+
+        // The orphaned path must produce a Removed event
+        let evt = result.expect("orphaned rename_from should emit Removed event");
+        assert!(matches!(evt.kind, WatchEventKind::Removed));
+        assert_eq!(evt.path, PathBuf::from("/tmp/old.so"));
+
+        // State must now track the new path
+        assert_eq!(state, Some(PathBuf::from("/tmp/new.so")));
+    }
+
+    #[test]
+    fn test_handle_rename_from_chained_orphans() {
+        let mut state: Option<PathBuf> = None;
+
+        // First From — no orphan
+        let r1 = handle_rename_from(&mut state, PathBuf::from("/a"));
+        assert!(r1.is_none());
+
+        // Second From without To — first path is orphaned
+        let r2 = handle_rename_from(&mut state, PathBuf::from("/b"));
+        let evt = r2.expect("should emit Removed for /a");
+        assert_eq!(evt.path, PathBuf::from("/a"));
+
+        // Third From without To — second path is orphaned
+        let r3 = handle_rename_from(&mut state, PathBuf::from("/c"));
+        let evt = r3.expect("should emit Removed for /b");
+        assert_eq!(evt.path, PathBuf::from("/b"));
+
+        assert_eq!(state, Some(PathBuf::from("/c")));
     }
 }
