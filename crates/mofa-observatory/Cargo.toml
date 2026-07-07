@@ -1,0 +1,37 @@
+[package]
+name = "mofa-observatory"
+version.workspace = true
+edition.workspace = true
+description = "Cognitive Observatory — Panoramic Monitoring Platform for MoFA AI Agent Systems"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "mofa-obs"
+path = "src/bin/mofa-obs.rs"
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true, features = ["macros", "ws"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono", "uuid", "macros"] }
+instant-distance = "0.6"
+tokio-tungstenite = "0.21"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower = { version = "0.5" }
+futures = { workspace = true }
+regex = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

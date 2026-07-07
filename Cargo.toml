@@ -16,6 +16,7 @@ members = [
     "crates/mofa-smith",
     "crates/mofa-integrations",
     "crates/mofa-local-llm",
+    "crates/mofa-observatory",
 ]
 exclude = ["examples"]
 [workspace.lints.rust]
