@@ -45,6 +45,7 @@ mod graph;
 mod node;
 mod profiler;
 mod reducers;
+pub mod replay;
 pub mod session_recorder;
 mod state;
 mod state_graph;
@@ -75,6 +76,7 @@ pub use executor::*;
 pub use graph::*;
 pub use mofa_kernel::workflow::policy::NodePolicy;
 pub use node::*;
+pub use replay::*;
 pub use profiler::*;
 pub use reducers::*;
 pub use session_recorder::{
