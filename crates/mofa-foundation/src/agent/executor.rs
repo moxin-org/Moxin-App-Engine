@@ -44,6 +44,7 @@ use tokio::sync::RwLock;
 
 use crate::agent::base::BaseAgent;
 use crate::agent::context::prompt::PromptContext;
+use crate::agent::governance::GovernancePipeline;
 
 use super::components::tool::SimpleToolRegistry;
 use super::{Session, SessionManager};
@@ -174,6 +175,8 @@ pub struct AgentExecutor {
     /// Optional context compressor applied before each LLM call when the
     /// estimated token count exceeds `config.max_context_tokens`.
     compressor: Option<Arc<dyn ContextCompressor>>,
+    /// Optional governance pipeline for moderation, redaction and tool policy enforcement.
+    governance: Option<Arc<GovernancePipeline>>,
 }
 
 impl AgentExecutor {
@@ -207,6 +210,7 @@ impl AgentExecutor {
             config: AgentExecutorConfig::default(),
             memory: None,
             compressor: None,
+            governance: None,
         })
     }
 
@@ -244,6 +248,7 @@ impl AgentExecutor {
             config,
             memory: None,
             compressor: None,
+            governance: None,
         })
     }
 
@@ -281,12 +286,25 @@ impl AgentExecutor {
         self
     }
 
+    /// Attach governance policy pipeline.
+    pub fn with_governance(mut self, governance: Arc<GovernancePipeline>) -> Self {
+        self.governance = Some(governance);
+        self
+    }
+
     /// Process a user message
     pub async fn process_message(
         &mut self,
         session_key: &str,
         message: &str,
     ) -> AgentResult<String> {
+        let user_message = if let Some(governance) = &self.governance {
+            governance.moderate_text(message)?;
+            governance.redact_text(message)
+        } else {
+            message.to_string()
+        };
+
         // 1. Get or create session
         let session = self.sessions.get_or_create(session_key).await;
 
@@ -314,7 +332,7 @@ impl AgentExecutor {
 
         // 4. Build messages
         let mut messages = self
-            .build_messages(&session, &system_prompt, message)
+            .build_messages(&session, &system_prompt, &user_message)
             .await?;
 
         // 4. Compress context if a compressor is configured and the token
@@ -329,11 +347,15 @@ impl AgentExecutor {
         }
 
         // 5. Run agent loop
-        let response = self.run_agent_loop(&mut messages).await?;
+        let mut response = self.run_agent_loop(&mut messages).await?;
+        if let Some(governance) = &self.governance {
+            governance.moderate_text(&response)?;
+            response = governance.redact_text(&response);
+        }
 
         // 6. Update session
         let mut session_updated = session.clone();
-        session_updated.add_message("user", message);
+        session_updated.add_message("user", &user_message);
         session_updated.add_message("assistant", &response);
         self.sessions.save(&session_updated).await?;
 
@@ -460,6 +482,9 @@ impl AgentExecutor {
                     let result = {
                         let tools_guard = self.tools.read().await;
                         if let Some(tool) = tools_guard.get(&tool_call.name) {
+                            if let Some(governance) = &self.governance {
+                                governance.authorize_tool(&tool_call.name, &tool.metadata())?;
+                            }
                             let timeout_dur = self.config.tool_timeout;
                             match tokio::time::timeout(
                                 timeout_dur,
@@ -504,6 +529,12 @@ impl AgentExecutor {
                             result.error.unwrap_or_else(|| "Unknown error".to_string())
                         )
                     };
+                    let result_str = if let Some(governance) = &self.governance {
+                        governance.moderate_text(&result_str)?;
+                        governance.redact_text(&result_str)
+                    } else {
+                        result_str
+                    };
 
                     // Add tool result message
                     messages.push(ChatMessage {
@@ -515,7 +546,12 @@ impl AgentExecutor {
                 }
             } else {
                 // No tool calls, return response
-                return Ok(response.content.unwrap_or_default());
+                let mut final_response = response.content.unwrap_or_default();
+                if let Some(governance) = &self.governance {
+                    governance.moderate_text(&final_response)?;
+                    final_response = governance.redact_text(&final_response);
+                }
+                return Ok(final_response);
             }
         }
 
