@@ -2,6 +2,7 @@
 //!
 //! Core runtime management for WASM plugin execution
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -158,8 +159,8 @@ impl CompiledModule {
 
 /// Module cache for compiled WASM modules
 pub struct ModuleCache {
-    /// Cached modules by name
-    modules: RwLock<HashMap<String, Arc<CompiledModule>>>,
+    /// Cached modules by name (insertion-ordered for FIFO eviction)
+    modules: RwLock<IndexMap<String, Arc<CompiledModule>>>,
     /// Cache by source hash
     by_hash: RwLock<HashMap<String, String>>,
     /// Maximum entries
@@ -173,7 +174,7 @@ pub struct ModuleCache {
 impl ModuleCache {
     pub fn new(max_entries: usize) -> Self {
         Self {
-            modules: RwLock::new(HashMap::new()),
+            modules: RwLock::new(IndexMap::new()),
             by_hash: RwLock::new(HashMap::new()),
             max_entries,
             hits: RwLock::new(0),
@@ -212,11 +213,20 @@ impl ModuleCache {
 
         let mut modules = self.modules.write().await;
 
-        // Evict if at capacity (simple LRU-ish: remove oldest)
-        if modules.len() >= self.max_entries
-            && let Some(oldest) = modules.keys().next().cloned()
-        {
-            modules.remove(&oldest);
+        // Evict if at capacity (FIFO: remove oldest inserted entry)
+        if modules.len() >= self.max_entries {
+            if let Some((evicted_name, evicted_module)) = modules.shift_remove_index(0) {
+                modules.insert(name.clone(), arc);
+                drop(modules);
+                let mut by_hash = self.by_hash.write().await;
+                by_hash.remove(&evicted_module.source_hash);
+                by_hash.insert(hash, name);
+                tracing::debug!(
+                    evicted = %evicted_name,
+                    "ModuleCache: evicted oldest module to make room"
+                );
+                return;
+            }
         }
 
         modules.insert(name.clone(), arc);

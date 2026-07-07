@@ -55,6 +55,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 dirs = "5.0"
 md-5 = "0.10"
 backoff = { version = "0.4", features = ["tokio"] }
+indexmap = "2"
 futures = "0.3"
 
 [lints]
