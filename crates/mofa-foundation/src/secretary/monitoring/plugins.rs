@@ -8,6 +8,7 @@ use super::plugin::{BaseEventResponsePlugin, EventResponseConfig, EventResponseP
 use async_trait::async_trait;
 use mofa_kernel::plugin::{PluginPriority, PluginResult};
 use std::collections::HashMap;
+use tracing::{debug, info};
 
 // ============================================================================
 // Server Fault Response Plugin
@@ -59,7 +60,7 @@ impl ServerFaultResponsePlugin {
     /// Attempt to restart the server automatically
     async fn attempt_auto_restart(&self, server: &str) -> Result<bool, String> {
         // Simulate server restart logic
-        println!("Attempting to restart server: {}", server);
+        info!("Attempting to restart server: {}", server);
         // In real implementation, this would call an API or execute a command
 
         // Return success for now
@@ -69,10 +70,12 @@ impl ServerFaultResponsePlugin {
     /// Notify the administrator about the server fault
     async fn notify_administrator(&self, event: &Event) -> Result<(), String> {
         // Simulate notification logic (email, SMS, Slack, etc.)
-        println!("Notifying administrator about server fault:");
-        println!("  Event ID: {}", event.id);
-        println!("  Source: {}", event.source);
-        println!("  Description: {}", event.description);
+        info!(
+            event_id = %event.id,
+            source = %event.source,
+            description = %event.description,
+            "Notifying administrator about server fault"
+        );
 
         Ok(())
     }
@@ -259,7 +262,7 @@ impl NetworkAttackResponsePlugin {
     /// Block the attacking IP address
     async fn block_attacking_ip(&self, ip: &str) -> Result<bool, String> {
         // Simulate IP blocking logic
-        println!("Blocking attacking IP: {}", ip);
+        info!("Blocking attacking IP: {}", ip);
         // In real implementation, this would update firewall rules, etc.
 
         Ok(true)
@@ -268,7 +271,7 @@ impl NetworkAttackResponsePlugin {
     /// Analyze the attack pattern
     async fn analyze_attack_pattern(&self, event: &Event) -> Result<String, String> {
         // Simulate attack analysis
-        println!("Analyzing attack pattern for event: {}", event.id);
+        debug!("Analyzing attack pattern for event: {}", event.id);
 
         Ok("ddos_attack".to_string()) // Dummy analysis result
     }
@@ -276,9 +279,12 @@ impl NetworkAttackResponsePlugin {
     /// Notify the security team about the attack
     async fn notify_security_team(&self, event: &Event, attack_type: &str) -> Result<(), String> {
         // Simulate security notification
-        println!("Notifying security team about {} attack:", attack_type);
-        println!("  Event ID: {}", event.id);
-        println!("  Source IP: {:?}", event.data.get("source_ip"));
+        info!(
+            attack_type = %attack_type,
+            event_id = %event.id,
+            source_ip = ?event.data.get("source_ip"),
+            "Notifying security team about network attack"
+        );
 
         Ok(())
     }

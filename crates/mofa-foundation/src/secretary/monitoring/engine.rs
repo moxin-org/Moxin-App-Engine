@@ -11,6 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, error, info, warn};
 
 /// Event handling engine
 pub struct EventHandlingEngine {
@@ -81,7 +82,7 @@ impl EventHandlingEngine {
 
     /// Submit an event to be handled
     pub async fn submit_event(&self, event: Event) {
-        println!(
+        info!(
             "Submitted new event: [{}] {} - {}",
             event.priority, event.source, event.description
         );
@@ -121,7 +122,7 @@ impl EventHandlingEngine {
         // Find the first plugin that can handle the event
         for (_plugin_id, plugin) in plugins.iter_mut() {
             if plugin.can_handle(&event) {
-                println!(
+                debug!(
                     "Processing event {} with plugin: {}",
                     event.id,
                     plugin.metadata().name
@@ -130,7 +131,7 @@ impl EventHandlingEngine {
                 // Process the event
                 let processed_event = plugin.handle_event(event).await?;
 
-                println!(
+                info!(
                     "Event {} processed successfully by plugin {}",
                     processed_event.id,
                     plugin.metadata().name
@@ -141,7 +142,7 @@ impl EventHandlingEngine {
         }
 
         // No plugin found to handle the event
-        println!("No plugin found to handle event: {}", event.id);
+        warn!("No plugin found to handle event: {}", event.id);
         event.update_status(EventStatus::ManualInterventionNeeded);
 
         Ok(Some(event))
@@ -149,7 +150,7 @@ impl EventHandlingEngine {
 
     /// Start the engine and process events continuously
     pub async fn start(&self) -> PluginResult<()> {
-        println!(
+        info!(
             "Starting event handling engine with {} concurrent handlers...",
             self.max_concurrent_handlers
         );
@@ -160,9 +161,9 @@ impl EventHandlingEngine {
                 Ok(Some(event)) => {
                     // Event processed, do any post-processing if needed
                     if event.status == EventStatus::Resolved {
-                        println!("Event resolved: {}", event.id);
+                        info!("Event resolved: {}", event.id);
                     } else {
-                        println!("Event {} status: {:?}", event.id, event.status);
+                        info!("Event {} status: {:?}", event.id, event.status);
                     }
                 }
                 Ok(None) => {
@@ -171,7 +172,7 @@ impl EventHandlingEngine {
                 }
                 Err(err) => {
                     // Handle error
-                    println!("Error processing event: {}", err);
+                    error!("Error processing event: {}", err);
                     // Continue processing
                     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                 }

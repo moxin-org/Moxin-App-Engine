@@ -9,6 +9,7 @@ use mofa_kernel::plugin::PluginResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 /// Rule adjustment strategy
 #[derive(Clone)]
@@ -81,15 +82,18 @@ impl RuleManager {
 
         // Get a mutable reference to the plugin
         // Note: In real implementation, we'd need interior mutability
-        println!(
-            "Adjusting rules for plugin {} based on priority: {:?}",
-            plugin.metadata().name,
-            event.priority
+        info!(
+            plugin_name = %plugin.metadata().name,
+            priority = ?event.priority,
+            "Adjusting rules for plugin based on priority"
         );
 
         // Example: For emergency events, skip validation steps
         if event.priority == EventPriority::Emergency {
-            println!("  - Emergency event: skipping non-critical validation steps");
+            warn!(
+                plugin_name = %plugin.metadata().name,
+                "Emergency event: skipping non-critical validation steps"
+            );
         }
 
         Ok(())
@@ -108,15 +112,18 @@ impl RuleManager {
         // 3. Increase logging verbosity
         // 4. Trigger failover mechanisms
 
-        println!(
-            "Adjusting rules for plugin {} based on scope: {:?}",
-            plugin.metadata().name,
-            event.scope
+        info!(
+            plugin_name = %plugin.metadata().name,
+            scope = ?event.scope,
+            "Adjusting rules for plugin based on scope"
         );
 
         // Example: For system-wide events, trigger failover
         if let ImpactScope::System = event.scope {
-            println!("  - System-wide event: triggering automatic failover");
+            warn!(
+                plugin_name = %plugin.metadata().name,
+                "System-wide event: triggering automatic failover"
+            );
         }
 
         Ok(())
