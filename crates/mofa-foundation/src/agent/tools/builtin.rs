@@ -22,7 +22,7 @@
 //! let mut registry = SimpleToolRegistry::new();
 //! registry.register(as_tool(DateTimeTool)).unwrap();
 //! registry.register(as_tool(FileReadTool)).unwrap();
-//! registry.register(as_tool(HttpTool)).unwrap();
+//! registry.register(as_tool(HttpTool::new())).unwrap();
 //! ```
 
 use async_trait::async_trait;
@@ -48,8 +48,29 @@ use crate::agent::components::tool::{SimpleTool, ToolCategory};
 /// | `method`  | string | no       | `"GET"` (default) or `"POST"` etc.     |
 /// | `body`    | string | no       | Request body for POST/PUT/PATCH        |
 /// | `headers` | object | no       | Additional headers as key→value pairs  |
-#[derive(Debug)]
-pub struct HttpTool;
+/// `HttpTool` holds a shared [`reqwest::Client`] so that the underlying
+/// connection pool and TLS session cache are reused across all invocations.
+/// Construct once and register with the tool registry; do not create a new
+/// instance per request.
+#[derive(Debug, Clone)]
+pub struct HttpTool {
+    client: reqwest::Client,
+}
+
+impl HttpTool {
+    /// Create a new `HttpTool` with a freshly-constructed, shared `reqwest::Client`.
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl Default for HttpTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl SimpleTool for HttpTool {
@@ -96,14 +117,13 @@ impl SimpleTool for HttpTool {
         };
 
         let method = input.get_str("method").unwrap_or("GET").to_uppercase();
-        let client = reqwest::Client::new();
 
         let mut builder = match method.as_str() {
-            "GET" => client.get(&url),
-            "POST" => client.post(&url),
-            "PUT" => client.put(&url),
-            "DELETE" => client.delete(&url),
-            "PATCH" => client.patch(&url),
+            "GET" => self.client.get(&url),
+            "POST" => self.client.post(&url),
+            "PUT" => self.client.put(&url),
+            "DELETE" => self.client.delete(&url),
+            "PATCH" => self.client.patch(&url),
             other => return ToolResult::failure(format!("unsupported HTTP method: {other}")),
         };
 
