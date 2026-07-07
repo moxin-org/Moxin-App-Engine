@@ -54,13 +54,25 @@ impl MetricValue {
 }
 
 /// Histogram data
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistogramData {
     pub count: u64,
     pub sum: f64,
     pub min: f64,
     pub max: f64,
     pub buckets: Vec<(f64, u64)>, // (upper_bound, count)
+}
+
+impl Default for HistogramData {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            sum: 0.0,
+            min: f64::MAX,
+            max: f64::MIN,
+            buckets: Vec::new(),
+        }
+    }
 }
 
 /// Counter metric
