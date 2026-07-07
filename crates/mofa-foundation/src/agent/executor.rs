@@ -548,6 +548,15 @@ impl AgentExecutor {
         &self.config
     }
 
+    /// Update the prompt context (system prompt builder).
+    pub async fn update_prompt_context<F>(&self, updater: F)
+    where
+        F: FnOnce(&mut PromptContext),
+    {
+        let mut ctx = self.context.write().await;
+        updater(&mut ctx);
+    }
+
     /// Get mutable reference to base agent
     pub fn base_mut(&mut self) -> &mut BaseAgent {
         &mut self.base
@@ -586,7 +595,9 @@ impl MoFAAgent for AgentExecutor {
         self.base.initialize(ctx).await?;
 
         // Additional executor-specific initialization
-        self.base.transition_to(AgentState::Ready)?;
+        if self.base.state() != AgentState::Ready {
+            self.base.transition_to(AgentState::Ready)?;
+        }
 
         Ok(())
     }

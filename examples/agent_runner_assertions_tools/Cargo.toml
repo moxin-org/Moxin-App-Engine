@@ -1,0 +1,10 @@
+[package]
+name = "agent_runner_assertions_tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mofa-testing = { path = "../../tests" }
+serde_json.workspace = true
+tokio.workspace = true

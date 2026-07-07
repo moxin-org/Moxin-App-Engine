@@ -142,6 +142,17 @@ impl PromptContext {
         self
     }
 
+    /// Replace the agent identity.
+    pub fn set_identity(&mut self, identity: AgentIdentity) {
+        self.agent_name = identity.name.clone();
+        self.identity = identity;
+    }
+
+    /// Replace the bootstrap file list.
+    pub fn set_bootstrap_files(&mut self, files: Vec<String>) {
+        self.bootstrap_files = files;
+    }
+
     /// Set skills that should always be loaded
     pub fn with_always_load(mut self, skills: Vec<String>) -> Self {
         self.always_load = skills;

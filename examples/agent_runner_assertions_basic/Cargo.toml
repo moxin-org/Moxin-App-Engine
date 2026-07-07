@@ -1,0 +1,10 @@
+[package]
+name = "agent_runner_assertions_basic"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mofa-runtime = { path = "../../crates/mofa-runtime" }
+mofa-testing = { path = "../../tests" }
+tokio.workspace = true
