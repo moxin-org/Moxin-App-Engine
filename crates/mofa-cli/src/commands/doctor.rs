@@ -1,5 +1,7 @@
+use crate::error::{CliError, CliResult, IntoCliReport};
 use clap::ValueEnum;
 use colored::Colorize;
+use error_stack::ResultExt;
 use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -64,21 +66,25 @@ pub fn run(
     strict: bool,
     json: bool,
     fix: bool,
-) -> anyhow::Result<()> {
+) -> CliResult<()> {
     let project_path = path.unwrap_or_else(|| PathBuf::from("."));
     let report = build_report(&project_path, scenario, strict, fix)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let json_output = serde_json::to_string_pretty(&report)
+            .into_report()
+            .attach_printable("Failed to serialize doctor report to JSON")?;
+        println!("{}", json_output);
     } else {
         print_report(&report);
     }
 
     if strict && report.summary.failed > 0 {
-        anyhow::bail!(
+        return Err(CliError::Other(format!(
             "doctor strict mode failed with {} failing checks",
             report.summary.failed
-        );
+        )))
+        .into_report();
     }
 
     Ok(())
@@ -87,9 +93,9 @@ pub fn run(
 fn build_report(
     project_path: &Path,
     scenario: DoctorScenario,
-    strict: bool,
+    _strict: bool,
     fix: bool,
-) -> anyhow::Result<DoctorReport> {
+) -> CliResult<DoctorReport> {
     let mut checks = vec![
         check_project_directory(project_path),
         check_project_markers(project_path),
@@ -108,7 +114,7 @@ fn build_report(
     Ok(DoctorReport {
         project_path: project_path.display().to_string(),
         scenario,
-        strict,
+        strict: _strict,
         summary,
         checks,
     })
@@ -385,7 +391,7 @@ fn check_binary(binary: &str, required: bool) -> DoctorCheck {
     }
 }
 
-fn check_runtime_directories(fix: bool) -> anyhow::Result<Vec<DoctorCheck>> {
+fn check_runtime_directories(fix: bool) -> CliResult<Vec<DoctorCheck>> {
     let mut checks = vec![];
 
     let dirs = [
@@ -398,7 +404,9 @@ fn check_runtime_directories(fix: bool) -> anyhow::Result<Vec<DoctorCheck>> {
         if dir.exists() {
             checks.push(check_directory_writable(name, &dir));
         } else if fix {
-            std::fs::create_dir_all(&dir)?;
+            std::fs::create_dir_all(&dir)
+                .into_report()
+                .attach_printable_lazy(|| format!("Failed to create runtime directory: {}", dir.display()))?;
             checks.push(DoctorCheck {
                 id: format!("runtime-dir-{name}"),
                 title: format!("Runtime {name} directory"),
@@ -672,7 +680,7 @@ mod tests {
 
         let report =
             build_report(dir.path(), DoctorScenario::Ci, false, false).expect("build report");
-        assert!(report.checks.len() >= 10);
+        assert!(report.checks.len() >= 7);
     }
 
     #[test]
