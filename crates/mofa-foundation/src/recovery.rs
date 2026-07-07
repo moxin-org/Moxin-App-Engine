@@ -778,4 +778,34 @@ mod tests {
         // Returns the LAST error
         assert!(result.unwrap_err().to_string().contains("b"));
     }
+
+    // -- Backoff overflow and boundary tests --
+
+    #[test]
+    fn test_backoff_linear_saturating_overflow() {
+        // Linear: initial + increment * attempt should saturate on overflow
+        let b = Backoff::linear(1, u64::MAX);
+        // 1 + u64::MAX * 2 saturates to u64::MAX
+        let delay = b.delay_for(2);
+        assert_eq!(delay, Duration::from_millis(u64::MAX));
+    }
+
+    #[test]
+    fn test_backoff_exponential_saturating_and_capped() {
+        // Exponential with very large exponent should saturate, then be capped by max_ms
+        let b = Backoff::exponential(1, 1000);
+        // attempt 100 -> 2^100 saturates, then min(1000) => 1000ms
+        let delay = b.delay_for(100);
+        assert_eq!(delay, Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_backoff_exponential_no_overflow_small_attempts() {
+        // Ensure small attempts still compute correctly
+        let b = Backoff::exponential(100, 5000);
+        assert_eq!(b.delay_for(0), Duration::from_millis(100));
+        assert_eq!(b.delay_for(1), Duration::from_millis(200));
+        assert_eq!(b.delay_for(2), Duration::from_millis(400));
+        assert_eq!(b.delay_for(3), Duration::from_millis(800));
+    }
 }
