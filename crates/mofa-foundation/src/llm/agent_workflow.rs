@@ -43,6 +43,7 @@ use super::agent::LLMAgent;
 use super::types::{LLMError, LLMResult};
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -662,7 +663,26 @@ impl AgentWorkflow {
                     .router
                     .as_ref()
                     .ok_or_else(|| LLMError::Other("Router function not set".to_string()))?;
-                let route = router(input.clone()).await;
+                
+                // Panic containment for user-provided router closure
+                let route = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    router(input.clone())
+                }))
+                .map_err(|payload| {
+                    let panic_msg = extract_panic_message(payload);
+                    tracing::error!(
+                        workflow_id = %self.id,
+                        node_id = %node.id,
+                        error = %panic_msg,
+                        "Panic caught in router function"
+                    );
+                    LLMError::Other(format!(
+                        "Router node '{}' panicked: {}",
+                        node.id, panic_msg
+                    ))
+                })?
+                .await;
+                
                 ctx.set_router_decision(&node.id, &route).await;
                 // 路由节点返回原输入，路由决策在 get_next_node 中使用
                 // Router returns original input; decision is used in get_next_node
@@ -681,7 +701,25 @@ impl AgentWorkflow {
                 let outputs = ctx.get_outputs(&node.wait_for).await;
 
                 if let Some(ref join_fn) = node.join_fn {
-                    Ok(join_fn(outputs).await)
+                    // Panic containment for user-provided join closure
+                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        join_fn(outputs)
+                    }))
+                    .map_err(|payload| {
+                        let panic_msg = extract_panic_message(payload);
+                        tracing::error!(
+                            workflow_id = %self.id,
+                            node_id = %node.id,
+                            error = %panic_msg,
+                            "Panic caught in join function"
+                        );
+                        LLMError::Other(format!(
+                            "Join node '{}' panicked: {}",
+                            node.id, panic_msg
+                        ))
+                    })?
+                    .await;
+                    Ok(result)
                 } else {
                     // 默认聚合：合并所有文本输出
                     // Default aggregation: merge all text outputs
@@ -695,7 +733,27 @@ impl AgentWorkflow {
                     .transform
                     .as_ref()
                     .ok_or_else(|| LLMError::Other("Transform function not set".to_string()))?;
-                Ok(transform(input).await)
+                
+                // Panic containment for user-provided transform closure
+                let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    transform(input)
+                }))
+                .map_err(|payload| {
+                    let panic_msg = extract_panic_message(payload);
+                    tracing::error!(
+                        workflow_id = %self.id,
+                        node_id = %node.id,
+                        error = %panic_msg,
+                        "Panic caught in transform function"
+                    );
+                    LLMError::Other(format!(
+                        "Transform node '{}' panicked: {}",
+                        node.id, panic_msg
+                    ))
+                })?
+                .await;
+                
+                Ok(result)
             }
         }
     }
@@ -725,7 +783,27 @@ impl AgentWorkflow {
                 Some(route) => route,
                 None => {
                     let router = node.router.as_ref()?;
-                    router(output.clone()).await
+                    
+                    // Panic containment for router in get_next_node
+                    // If panic occurs, log error and end workflow gracefully
+                    let router_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        router(output.clone())
+                    }));
+                    
+                    match router_result {
+                        Ok(router_future) => router_future.await,
+                        Err(payload) => {
+                            let panic_msg = extract_panic_message(payload);
+                            tracing::error!(
+                                workflow_id = %self.id,
+                                node_id = %current_id,
+                                error = %panic_msg,
+                                "Panic caught in router function during node selection"
+                            );
+                            // Return None to end workflow gracefully
+                            return None;
+                        }
+                    }
                 }
             };
 
@@ -1038,6 +1116,22 @@ impl AgentWorkflowBuilder {
 }
 
 // ============================================================================
+// Panic Containment Helper Functions
+// ============================================================================
+
+/// Extract panic message from payload
+/// Handles cases: &str, String, and unknown panic payload
+fn extract_panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "Unknown panic payload".to_string()
+    }
+}
+
+// ============================================================================
 // 便捷函数
 // Helper functions
 // ============================================================================
@@ -1245,5 +1339,27 @@ mod tests {
         assert!(workflow.get_node("step1").is_some());
         assert!(workflow.get_node("step2").is_some());
         assert!(workflow.get_node("step3").is_some());
+    }
+
+    // ============================================================================
+    // Panic Containment Tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_panic_message() {
+        // Test &str panic payload
+        let payload: Box<dyn std::any::Any + Send> = Box::new("test panic message");
+        let msg = extract_panic_message(payload);
+        assert_eq!(msg, "test panic message");
+
+        // Test String panic payload
+        let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("string panic"));
+        let msg = extract_panic_message(payload);
+        assert_eq!(msg, "string panic");
+
+        // Test unknown panic payload
+        let payload: Box<dyn std::any::Any + Send> = Box::new(42i32);
+        let msg = extract_panic_message(payload);
+        assert_eq!(msg, "Unknown panic payload");
     }
 }
