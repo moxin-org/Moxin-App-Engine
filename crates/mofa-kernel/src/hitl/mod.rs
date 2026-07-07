@@ -14,5 +14,5 @@ pub use context::{
 pub use error::{HitlError, HitlResult, StoreError};
 pub use policy::{AlwaysReviewPolicy, NeverReviewPolicy, ReviewPolicy};
 pub use types::{
-    ReviewMetadata, ReviewRequest, ReviewRequestId, ReviewResponse, ReviewStatus, ReviewType,
+    ReviewMetadata, ReviewQuery, ReviewRequest, ReviewRequestId, ReviewResponse, ReviewStatus, ReviewType,
 };

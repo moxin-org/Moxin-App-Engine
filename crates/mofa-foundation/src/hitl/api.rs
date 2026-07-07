@@ -17,7 +17,7 @@
 //! ```
 
 use crate::hitl::manager::ReviewManager;
-use mofa_kernel::hitl::{AuditLogQuery, ReviewRequestId, ReviewResponse, ReviewStatus};
+use mofa_kernel::hitl::{AuditLogQuery, ReviewQuery, ReviewRequestId, ReviewResponse, ReviewStatus};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -157,10 +157,16 @@ async fn list_reviews_handler(
     axum::extract::Query(params): axum::extract::Query<QueryReviewsRequest>,
 ) -> axum::response::Response {
     use axum::{http::StatusCode, response::IntoResponse, response::Json};
-    let tenant_id = params.tenant_id;
-    let limit = params.limit;
+    
+    let query = mofa_kernel::hitl::ReviewQuery {
+        execution_id: params.execution_id,
+        tenant_id: params.tenant_id,
+        status: params.status,
+        limit: params.limit,
+        offset: params.offset,
+    };
 
-    match state.manager.list_pending(tenant_id, limit).await {
+    match state.manager.query_reviews(&query).await {
         Ok(reviews) => {
             let summaries: Vec<ReviewSummary> = reviews
                 .into_iter()
@@ -337,10 +343,9 @@ impl ReviewApiState {
     /// List reviews (framework-agnostic)
     pub async fn list_reviews(
         &self,
-        tenant_id: Option<Uuid>,
-        limit: Option<u64>,
+        query: &ReviewQuery,
     ) -> Result<ReviewListResponse, crate::hitl::error::FoundationHitlError> {
-        let reviews = self.manager.list_pending(tenant_id, limit).await?;
+        let reviews = self.manager.query_reviews(query).await?;
 
         let summaries: Vec<ReviewSummary> = reviews
             .into_iter()

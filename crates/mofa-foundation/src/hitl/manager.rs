@@ -9,7 +9,7 @@ use crate::hitl::policy_engine::ReviewPolicyEngine;
 use crate::hitl::rate_limiter::RateLimiter;
 use crate::hitl::store::ReviewStore;
 use mofa_kernel::hitl::{
-    AuditLogQuery, HitlError, ReviewAuditEvent, ReviewAuditEventType, ReviewContext, ReviewRequest,
+    AuditLogQuery, HitlError, ReviewAuditEvent, ReviewAuditEventType, ReviewContext, ReviewQuery, ReviewRequest,
     ReviewRequestId, ReviewResponse, ReviewStatus,
 };
 use std::sync::Arc;
@@ -358,6 +358,17 @@ impl ReviewManager {
     ) -> HitlResult<Vec<ReviewRequest>> {
         self.store
             .list_pending(tenant_id, limit)
+            .await
+            .map_err(FoundationHitlError::Store)
+    }
+
+    /// Query reviews with filters and pagination
+    pub async fn query_reviews(
+        &self,
+        query: &ReviewQuery,
+    ) -> HitlResult<Vec<ReviewRequest>> {
+        self.store
+            .query_reviews(query)
             .await
             .map_err(FoundationHitlError::Store)
     }

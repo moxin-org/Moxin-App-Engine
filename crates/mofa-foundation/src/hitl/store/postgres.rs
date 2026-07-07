@@ -3,7 +3,7 @@
 #[cfg(feature = "persistence-postgres")]
 use async_trait::async_trait;
 #[cfg(feature = "persistence-postgres")]
-use mofa_kernel::hitl::{ReviewRequest, ReviewRequestId, ReviewStatus};
+use mofa_kernel::hitl::{ReviewQuery, ReviewRequest, ReviewRequestId, ReviewStatus};
 #[cfg(feature = "persistence-postgres")]
 use serde_json;
 #[cfg(feature = "persistence-postgres")]
@@ -199,6 +199,54 @@ impl ReviewStore for PostgresReviewStore {
         .fetch_all(&*self.pool)
         .await
         .map_err(|e| ReviewStoreError::Query(e.to_string()))?;
+
+        let mut reviews = Vec::new();
+        for row in rows {
+            if let Ok(review) = self.row_to_review(row).await {
+                reviews.push(review);
+            }
+        }
+
+        Ok(reviews)
+    }
+
+    async fn query_reviews(
+        &self,
+        query: &ReviewQuery,
+    ) -> Result<Vec<ReviewRequest>, ReviewStoreError> {
+        let mut qb = sqlx::QueryBuilder::new("SELECT * FROM review_requests WHERE 1=1");
+
+        if let Some(ref execution_id) = query.execution_id {
+            qb.push(" AND execution_id = ");
+            qb.push_bind(execution_id);
+        }
+
+        if let Some(ref tenant_id) = query.tenant_id {
+            qb.push(" AND metadata->>'tenant_id' = ");
+            qb.push_bind(tenant_id.to_string());
+        }
+
+        if let Some(ref status) = query.status {
+            qb.push(" AND status = ");
+            qb.push_bind(status);
+        }
+
+        qb.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = query.limit {
+            qb.push(" LIMIT ");
+            qb.push_bind(limit as i64);
+        }
+
+        if let Some(offset) = query.offset {
+            qb.push(" OFFSET ");
+            qb.push_bind(offset as i64);
+        }
+
+        let rows = qb.build()
+            .fetch_all(&*self.pool)
+            .await
+            .map_err(|e| ReviewStoreError::Query(e.to_string()))?;
 
         let mut reviews = Vec::new();
         for row in rows {

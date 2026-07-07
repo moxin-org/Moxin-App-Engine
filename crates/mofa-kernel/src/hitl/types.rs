@@ -193,3 +193,18 @@ impl ReviewRequest {
         !matches!(self.status, ReviewStatus::Pending)
     }
 }
+
+/// Query parameters for filtering reviews
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReviewQuery {
+    /// Filter by execution ID
+    pub execution_id: Option<String>,
+    /// Filter by tenant ID
+    pub tenant_id: Option<Uuid>,
+    /// Filter by status string mapping
+    pub status: Option<String>,
+    /// Maximum number of results to return
+    pub limit: Option<u64>,
+    /// Number of results to skip
+    pub offset: Option<u64>,
+}

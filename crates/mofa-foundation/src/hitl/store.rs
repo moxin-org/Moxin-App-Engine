@@ -3,7 +3,7 @@
 //! Persistent storage for review requests
 
 use async_trait::async_trait;
-use mofa_kernel::hitl::{ReviewRequest, ReviewRequestId, ReviewStatus};
+use mofa_kernel::hitl::{ReviewQuery, ReviewRequest, ReviewRequestId, ReviewStatus};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -59,6 +59,12 @@ pub trait ReviewStore: Send + Sync {
     async fn list_by_execution(
         &self,
         execution_id: &str,
+    ) -> Result<Vec<ReviewRequest>, ReviewStoreError>;
+
+    /// Query reviews with filters and pagination
+    async fn query_reviews(
+        &self,
+        query: &ReviewQuery,
     ) -> Result<Vec<ReviewRequest>, ReviewStoreError>;
 
     /// List expired reviews
@@ -152,6 +158,53 @@ impl ReviewStore for InMemoryReviewStore {
             .filter(|r| r.execution_id == execution_id)
             .cloned()
             .collect())
+    }
+
+    async fn query_reviews(
+        &self,
+        query: &ReviewQuery,
+    ) -> Result<Vec<ReviewRequest>, ReviewStoreError> {
+        let reviews = self.reviews.read();
+        let mut results: Vec<_> = reviews
+            .values()
+            .filter(|r| {
+                if let Some(ref execution_id) = query.execution_id
+                    && r.execution_id != *execution_id {
+                        return false;
+                    }
+                if let Some(ref tenant_id) = query.tenant_id
+                    && r.metadata.tenant_id != Some(*tenant_id) {
+                        return false;
+                    }
+                if let Some(ref status_str) = query.status {
+                    let r_status_str = format!("{:?}", r.status).to_lowercase();
+                    if r_status_str != status_str.to_lowercase() {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        // Sort descending by creation date
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+        // Apply offset
+        if let Some(offset) = query.offset {
+            let offset_usize = offset as usize;
+            if offset_usize >= results.len() {
+                return Ok(Vec::new());
+            }
+            results = results.split_off(offset_usize);
+        }
+
+        // Apply limit
+        if let Some(limit) = query.limit {
+            results.truncate(limit as usize);
+        }
+
+        Ok(results)
     }
 
     async fn list_expired(&self) -> Result<Vec<ReviewRequest>, ReviewStoreError> {
@@ -335,6 +388,73 @@ mod tests {
         } else {
             panic!("Expected NotFound error");
         }
+    }
+
+    #[tokio::test]
+    async fn test_query_reviews() {
+        let store = InMemoryReviewStore::new();
+        let tenant_1 = Uuid::new_v4();
+
+        // Create reviews
+        let mut review1 = create_test_review("exec-1");
+        review1.metadata.tenant_id = Some(tenant_1);
+        
+        let mut review2 = create_test_review("exec-1");
+        review2.status = ReviewStatus::Approved;
+        review2.metadata.tenant_id = Some(tenant_1);
+
+        let mut review3 = create_test_review("exec-2");
+        review3.status = ReviewStatus::Rejected;
+        review3.metadata.tenant_id = Some(tenant_1);
+
+        let review4 = create_test_review("exec-3");
+
+        store.create_review(&review1).await.unwrap();
+        // fake small delay so created_at differs if they rely on it for sorting
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        store.create_review(&review2).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        store.create_review(&review3).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        store.create_review(&review4).await.unwrap();
+
+        // 1. Filter by tenant_id
+        let query = ReviewQuery {
+            tenant_id: Some(tenant_1),
+            ..Default::default()
+        };
+        let res = store.query_reviews(&query).await.unwrap();
+        assert_eq!(res.len(), 3);
+
+        // 2. Filter by status
+        let query = ReviewQuery {
+            status: Some("Approved".to_string()),
+            ..Default::default()
+        };
+        let res = store.query_reviews(&query).await.unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].execution_id, "exec-1");
+
+        // 3. Filter by execution_id
+        let query = ReviewQuery {
+            execution_id: Some("exec-1".to_string()),
+            ..Default::default()
+        };
+        let res = store.query_reviews(&query).await.unwrap();
+        assert_eq!(res.len(), 2);
+
+        // 4. Test pagination (limit and offset)
+        // All reviews, sorted by created_at desc
+        let query = ReviewQuery {
+            limit: Some(2),
+            offset: Some(1),
+            ..Default::default()
+        };
+        let res = store.query_reviews(&query).await.unwrap();
+        assert_eq!(res.len(), 2);
+        // Latest is review4, so offset 1 is review3, offset 2 is review2
+        assert_eq!(res[0].execution_id, "exec-2"); // review3
+        assert_eq!(res[1].status, ReviewStatus::Approved); // review2
     }
 }
 
