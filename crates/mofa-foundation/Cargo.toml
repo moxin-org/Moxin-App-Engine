@@ -31,6 +31,8 @@ persistence-all = [
 kokoro = ["mofa-plugins/kokoro"]
 # Enable MCP (Model Context Protocol) client support
 mcp = ["dep:rmcp"]
+# Enable Cohere embedding provider
+cohere = []
 # Enable Qdrant vector database support
 qdrant = ["dep:qdrant-client"]
 # Enable accurate token counting with tiktoken

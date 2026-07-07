@@ -26,6 +26,10 @@ pub enum RagEmbeddingProvider {
     OpenAi,
     /// Local Ollama embedding API (default: `nomic-embed-text`).
     Ollama,
+    /// Cohere Embed API (default: `embed-english-v3.0`).
+    /// Requires the `cohere` feature flag.
+    #[cfg(feature = "cohere")]
+    Cohere,
 }
 
 impl std::fmt::Display for RagEmbeddingProvider {
@@ -33,6 +37,8 @@ impl std::fmt::Display for RagEmbeddingProvider {
         match self {
             RagEmbeddingProvider::OpenAi => write!(f, "openai"),
             RagEmbeddingProvider::Ollama => write!(f, "ollama"),
+            #[cfg(feature = "cohere")]
+            RagEmbeddingProvider::Cohere => write!(f, "cohere"),
         }
     }
 }
@@ -44,9 +50,17 @@ impl std::str::FromStr for RagEmbeddingProvider {
         match s.to_ascii_lowercase().as_str() {
             "openai" | "open_ai" => Ok(Self::OpenAi),
             "ollama" => Ok(Self::Ollama),
+            #[cfg(feature = "cohere")]
+            "cohere" => Ok(Self::Cohere),
             other => Err(format!(
-                "unknown embedding provider '{}'; expected 'openai' or 'ollama'",
-                other
+                "unknown embedding provider '{}'; expected 'openai', 'ollama'\
+                 {}",
+                other,
+                if cfg!(feature = "cohere") {
+                    ", or 'cohere'"
+                } else {
+                    ""
+                },
             )),
         }
     }
@@ -107,6 +121,19 @@ impl RagEmbeddingConfig {
         }
     }
 
+    /// Create a config for Cohere with defaults.
+    ///
+    /// Requires the `cohere` feature flag.
+    #[cfg(feature = "cohere")]
+    pub fn cohere() -> Self {
+        Self {
+            provider: RagEmbeddingProvider::Cohere,
+            model: Some("embed-english-v3.0".to_string()),
+            batch_size: 96, // Cohere API limit
+            ..Default::default()
+        }
+    }
+
     /// Override the model name.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
@@ -136,6 +163,8 @@ impl RagEmbeddingConfig {
         self.model.as_deref().unwrap_or(match self.provider {
             RagEmbeddingProvider::OpenAi => "text-embedding-3-small",
             RagEmbeddingProvider::Ollama => "nomic-embed-text",
+            #[cfg(feature = "cohere")]
+            RagEmbeddingProvider::Cohere => "embed-english-v3.0",
         })
     }
 }
@@ -382,6 +411,30 @@ mod tests {
     fn provider_display() {
         assert_eq!(RagEmbeddingProvider::OpenAi.to_string(), "openai");
         assert_eq!(RagEmbeddingProvider::Ollama.to_string(), "ollama");
+    }
+
+    #[cfg(feature = "cohere")]
+    #[test]
+    fn parse_cohere_provider_from_str() {
+        assert_eq!(
+            "cohere".parse::<RagEmbeddingProvider>().unwrap(),
+            RagEmbeddingProvider::Cohere
+        );
+    }
+
+    #[cfg(feature = "cohere")]
+    #[test]
+    fn cohere_provider_display() {
+        assert_eq!(RagEmbeddingProvider::Cohere.to_string(), "cohere");
+    }
+
+    #[cfg(feature = "cohere")]
+    #[test]
+    fn cohere_config_defaults() {
+        let config = RagEmbeddingConfig::cohere();
+        assert_eq!(config.provider, RagEmbeddingProvider::Cohere);
+        assert_eq!(config.resolved_model(), "embed-english-v3.0");
+        assert_eq!(config.batch_size, 96);
     }
 
     // ----- Config -----

@@ -321,6 +321,9 @@ pub mod ollama;
 pub mod openai;
 pub mod pipeline;
 
+#[cfg(feature = "cohere")]
+pub mod cohere;
+
 // Framework components
 pub mod agent_loop;
 pub mod context;

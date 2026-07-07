@@ -11,13 +11,16 @@ mofa-foundation = "0.1"
 
 ## Features
 
-- LLM integration (OpenAI provider)
+- LLM integration (OpenAI, Ollama, Cohere\* providers)
+- RAG pipeline with pluggable embedding backends
 - Agent abstractions and implementations
 - Persistence layer (PostgreSQL, MySQL, SQLite support)
 - Actor-based execution using Ractor
 - ReAct agent pattern implementation
 - Rich agent context and session management
 - Memory and reasoner components
+
+\* Cohere support requires the `cohere` feature flag: `mofa-foundation = { version = "0.1", features = ["cohere"] }`
 
 ## Documentation
 
