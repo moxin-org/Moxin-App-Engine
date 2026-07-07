@@ -166,7 +166,7 @@ async fn run_command(cli: Cli) -> CliResult<()> {
         },
 
         Some(Commands::Agent(agent_cmd)) => {
-            let ctx = ctx.as_ref().unwrap();
+            let ctx = ctx.as_ref().ok_or_else(|| CliError::InitError("CLI context not initialized; run `mofa init` first or check that backend services are reachable".to_string())).into_report()?;
             match agent_cmd {
                 cli::AgentCommands::Create {
                     non_interactive,
@@ -249,7 +249,7 @@ async fn run_command(cli: Cli) -> CliResult<()> {
         },
 
         Some(Commands::Plugin { action }) => {
-            let ctx = ctx.as_ref().unwrap();
+            let ctx = ctx.as_ref().ok_or_else(|| CliError::InitError("CLI context not initialized; run `mofa init` first or check that backend services are reachable".to_string())).into_report()?;
             match action {
                 cli::PluginCommands::New { name } => {
                     commands::plugin::new::run(name.as_deref()).await?;
@@ -296,7 +296,7 @@ async fn run_command(cli: Cli) -> CliResult<()> {
         }
 
         Some(Commands::Session { action }) => {
-            let ctx = ctx.as_ref().unwrap();
+            let ctx = ctx.as_ref().ok_or_else(|| CliError::InitError("CLI context not initialized; run `mofa init` first or check that backend services are reachable".to_string())).into_report()?;
             match action {
                 cli::SessionCommands::List { agent, limit } => {
                     commands::session::list::run(ctx, agent.as_deref(), limit).await?;
@@ -325,7 +325,7 @@ async fn run_command(cli: Cli) -> CliResult<()> {
         }
 
         Some(Commands::Tool { action }) => {
-            let ctx = ctx.as_ref().unwrap();
+            let ctx = ctx.as_ref().ok_or_else(|| CliError::InitError("CLI context not initialized; run `mofa init` first or check that backend services are reachable".to_string())).into_report()?;
             match action {
                 cli::ToolCommands::List { available, enabled } => {
                     commands::tool::list::run(ctx, available, enabled).await?;
