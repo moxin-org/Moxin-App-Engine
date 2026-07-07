@@ -35,12 +35,14 @@ pub enum Backoff {
         /// Delay in milliseconds
         delay_ms: u64,
     },
-    /// Linear backoff: delay = initial + (attempt * increment)
+    /// Linear backoff: delay = min(initial + (attempt * increment), max)
     Linear {
         /// Initial delay in milliseconds
         initial_ms: u64,
         /// Increment per attempt in milliseconds
         increment_ms: u64,
+        /// Maximum delay in milliseconds (cap to prevent overflow)
+        max_ms: u64,
     },
     /// Exponential backoff: delay = min(initial * 2^attempt, max)
     Exponential {
@@ -71,11 +73,21 @@ impl Backoff {
         Self::Exponential { initial_ms, max_ms }
     }
 
-    /// Create a linear backoff
+    /// Create a linear backoff with a default max of 60 seconds
     pub fn linear(initial_ms: u64, increment_ms: u64) -> Self {
         Self::Linear {
             initial_ms,
             increment_ms,
+            max_ms: 60_000,
+        }
+    }
+
+    /// Create a linear backoff with an explicit max delay
+    pub fn linear_with_max(initial_ms: u64, increment_ms: u64, max_ms: u64) -> Self {
+        Self::Linear {
+            initial_ms,
+            increment_ms,
+            max_ms,
         }
     }
 
@@ -87,9 +99,11 @@ impl Backoff {
             Self::Linear {
                 initial_ms,
                 increment_ms,
+                max_ms,
             } => {
-                let ms = initial_ms + (increment_ms * attempt as u64);
-                Duration::from_millis(ms)
+                let ms = initial_ms
+                    .saturating_add(increment_ms.saturating_mul(attempt as u64));
+                Duration::from_millis(ms.min(*max_ms))
             }
             Self::Exponential { initial_ms, max_ms } => {
                 let ms = initial_ms.saturating_mul(2u64.saturating_pow(attempt.min(20)));
@@ -497,6 +511,26 @@ mod tests {
         assert_eq!(b.delay_for(0), Duration::from_millis(100));
         assert_eq!(b.delay_for(1), Duration::from_millis(300));
         assert_eq!(b.delay_for(2), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_backoff_linear_saturates_and_caps() {
+        // Verify saturating arithmetic prevents overflow panic
+        let b = Backoff::linear(100, 1000);
+        // Large attempt: should NOT panic, should saturate to max (60s default)
+        let d = b.delay_for(u32::MAX);
+        assert_eq!(d, Duration::from_millis(60_000));
+    }
+
+    #[test]
+    fn test_backoff_linear_with_custom_max() {
+        let b = Backoff::linear_with_max(100, 500, 2000);
+        assert_eq!(b.delay_for(0), Duration::from_millis(100));
+        assert_eq!(b.delay_for(1), Duration::from_millis(600));
+        assert_eq!(b.delay_for(2), Duration::from_millis(1100));
+        assert_eq!(b.delay_for(3), Duration::from_millis(1600));
+        // Capped at max_ms
+        assert_eq!(b.delay_for(100), Duration::from_millis(2000));
     }
 
     #[test]

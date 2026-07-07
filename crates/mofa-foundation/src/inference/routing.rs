@@ -574,6 +574,7 @@ mod tests {
             assert_eq!(back, variant);
         }
     }
+    #[test]
     fn test_degradation_ladder_degrades_to_q4_when_q8_too_large() {
         // Constrained hardware: only 4 GB available
         // Request: 13312 MB at F16 (2 bpp)
