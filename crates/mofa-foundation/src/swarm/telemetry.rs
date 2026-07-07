@@ -16,81 +16,115 @@ use mofa_kernel::workflow::telemetry::DebugEvent;
 
 use crate::swarm::config::{AuditEvent, AuditEventKind};
 
+#[derive(Debug, Clone)]
+struct CorrelationContext {
+    workflow_id: String,
+    execution_id: String,
+    subtask_id: Option<String>,
+}
+
+impl CorrelationContext {
+    fn from_event(event: &AuditEvent) -> Self {
+        let workflow_id = event
+            .data
+            .get("workflow_id")
+            .and_then(|v| v.as_str())
+            .or_else(|| event.data.get("swarm_id").and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
+
+        let execution_id = event
+            .data
+            .get("execution_id")
+            .and_then(|v| v.as_str())
+            .or_else(|| event.data.get("run_id").and_then(|v| v.as_str()))
+            .unwrap_or(&workflow_id)
+            .to_string();
+
+        let subtask_id = event
+            .data
+            .get("subtask_id")
+            .or_else(|| event.data.get("node_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        Self {
+            workflow_id,
+            execution_id,
+            subtask_id,
+        }
+    }
+
+    fn with_snapshot(&self, data: &serde_json::Value) -> serde_json::Value {
+        let mut snapshot = match data {
+            serde_json::Value::Object(map) => serde_json::Value::Object(map.clone()),
+            other => serde_json::json!({ "raw_data": other }),
+        };
+
+        if let serde_json::Value::Object(map) = &mut snapshot {
+            map.entry("workflow_id".to_string())
+                .or_insert_with(|| serde_json::Value::String(self.workflow_id.clone()));
+            map.entry("execution_id".to_string())
+                .or_insert_with(|| serde_json::Value::String(self.execution_id.clone()));
+            if let Some(subtask_id) = &self.subtask_id {
+                map.entry("subtask_id".to_string())
+                    .or_insert_with(|| serde_json::Value::String(subtask_id.clone()));
+            }
+        }
+        snapshot
+    }
+}
+
 /// Convert a swarm [`AuditEvent`] into a kernel [`DebugEvent`].
 pub fn audit_to_debug(event: &AuditEvent) -> DebugEvent {
     let ts = u64::try_from(event.timestamp.timestamp_millis()).unwrap_or(u64::MAX);
+    let corr = CorrelationContext::from_event(event);
 
     match &event.kind {
         // Swarm lifecycle
-        AuditEventKind::SwarmStarted => {
-            let swarm_id = event
-                .data
-                .get("swarm_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+        AuditEventKind::SwarmStarted => DebugEvent::WorkflowStart {
+            workflow_id: corr.workflow_id.clone(),
+            execution_id: corr.execution_id.clone(),
+            timestamp_ms: ts,
+        },
 
-            DebugEvent::WorkflowStart {
-                workflow_id: swarm_id.clone(),
-                execution_id: swarm_id,
-                timestamp_ms: ts,
-            }
-        }
-
-        AuditEventKind::SwarmCompleted => {
-            let swarm_id = event
-                .data
-                .get("swarm_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            DebugEvent::WorkflowEnd {
-                workflow_id: swarm_id.clone(),
-                execution_id: swarm_id,
-                timestamp_ms: ts,
-                status: "completed".to_string(),
-            }
-        }
+        AuditEventKind::SwarmCompleted => DebugEvent::WorkflowEnd {
+            workflow_id: corr.workflow_id.clone(),
+            execution_id: corr.execution_id.clone(),
+            timestamp_ms: ts,
+            status: "completed".to_string(),
+        },
 
         // Subtask lifecycle
         AuditEventKind::SubtaskStarted | AuditEventKind::AgentAssigned => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let node_id = corr
+                .subtask_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
 
             DebugEvent::NodeStart {
                 node_id,
                 timestamp_ms: ts,
-                state_snapshot: event.data.clone(),
+                state_snapshot: corr.with_snapshot(&event.data),
             }
         }
 
         AuditEventKind::SubtaskCompleted => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let node_id = corr
+                .subtask_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
 
             DebugEvent::NodeEnd {
                 node_id,
                 timestamp_ms: ts,
-                state_snapshot: event.data.clone(),
+                state_snapshot: corr.with_snapshot(&event.data),
                 duration_ms: 0, // populated from SwarmMetrics when available
             }
         }
 
         AuditEventKind::SubtaskFailed | AuditEventKind::SLABreach => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
+            let node_id = corr.subtask_id;
 
             DebugEvent::Error {
                 node_id,
@@ -101,12 +135,7 @@ pub fn audit_to_debug(event: &AuditEvent) -> DebugEvent {
 
         // HITL decisions
         AuditEventKind::HITLDecision => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("hitl")
-                .to_string();
+            let node_id = corr.subtask_id.unwrap_or_else(|| "hitl".to_string());
 
             DebugEvent::StateChange {
                 node_id,
@@ -123,12 +152,7 @@ pub fn audit_to_debug(event: &AuditEvent) -> DebugEvent {
 
         // Agent reassignment
         AuditEventKind::AgentReassigned => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let node_id = corr.subtask_id.unwrap_or_else(|| "unknown".to_string());
 
             DebugEvent::StateChange {
                 node_id,
@@ -146,17 +170,15 @@ pub fn audit_to_debug(event: &AuditEvent) -> DebugEvent {
         // informational events
         // HITLRequested, SLAWarning, TaskDecomposed, PatternSelected
         _ => {
-            let node_id = event
-                .data
-                .get("subtask_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
+            let node_id = corr
+                .subtask_id
+                .clone()
                 .unwrap_or_else(|| format!("{:?}", event.kind).to_lowercase());
 
             DebugEvent::NodeStart {
                 node_id,
                 timestamp_ms: ts,
-                state_snapshot: event.data.clone(),
+                state_snapshot: corr.with_snapshot(&event.data),
             }
         }
     }
@@ -182,12 +204,18 @@ mod tests {
         let event = make_event(
             AuditEventKind::SwarmStarted,
             "Swarm started",
-            json!({ "swarm_id": "swarm-abc" }),
+            json!({ "swarm_id": "swarm-abc", "execution_id": "exec-1" }),
         );
         let debug = audit_to_debug(&event);
         assert!(matches!(debug, DebugEvent::WorkflowStart { .. }));
-        if let DebugEvent::WorkflowStart { workflow_id, .. } = debug {
+        if let DebugEvent::WorkflowStart {
+            workflow_id,
+            execution_id,
+            ..
+        } = debug
+        {
             assert_eq!(workflow_id, "swarm-abc");
+            assert_eq!(execution_id, "exec-1");
         }
     }
 
@@ -196,11 +224,19 @@ mod tests {
         let event = make_event(
             AuditEventKind::SwarmCompleted,
             "Swarm completed",
-            json!({ "swarm_id": "swarm-abc" }),
+            json!({ "workflow_id": "swarm-abc", "execution_id": "exec-1" }),
         );
         let debug = audit_to_debug(&event);
         assert!(matches!(debug, DebugEvent::WorkflowEnd { .. }));
-        if let DebugEvent::WorkflowEnd { status, .. } = debug {
+        if let DebugEvent::WorkflowEnd {
+            workflow_id,
+            execution_id,
+            status,
+            ..
+        } = debug
+        {
+            assert_eq!(workflow_id, "swarm-abc");
+            assert_eq!(execution_id, "exec-1");
             assert_eq!(status, "completed");
         }
     }
@@ -210,12 +246,23 @@ mod tests {
         let event = make_event(
             AuditEventKind::SubtaskStarted,
             "Subtask started",
-            json!({ "subtask_id": "task-1" }),
+            json!({
+                "workflow_id": "swarm-1",
+                "execution_id": "exec-1",
+                "subtask_id": "task-1"
+            }),
         );
         let debug = audit_to_debug(&event);
         assert!(matches!(debug, DebugEvent::NodeStart { .. }));
-        if let DebugEvent::NodeStart { node_id, .. } = debug {
+        if let DebugEvent::NodeStart {
+            node_id,
+            state_snapshot,
+            ..
+        } = debug
+        {
             assert_eq!(node_id, "task-1");
+            assert_eq!(state_snapshot["workflow_id"], json!("swarm-1"));
+            assert_eq!(state_snapshot["execution_id"], json!("exec-1"));
         }
     }
 
@@ -369,5 +416,145 @@ mod tests {
         let expected_ts = event.timestamp.timestamp_millis() as u64;
         let debug = audit_to_debug(&event);
         assert_eq!(debug.timestamp_ms(), expected_ts);
+    }
+
+    #[test]
+    fn test_lifecycle_correlation_identity_consistency() {
+        let events = vec![
+            make_event(
+                AuditEventKind::SwarmStarted,
+                "start",
+                json!({
+                    "swarm_id": "swarm-42",
+                    "execution_id": "exec-42"
+                }),
+            ),
+            make_event(
+                AuditEventKind::AgentAssigned,
+                "assigned",
+                json!({
+                    "workflow_id": "swarm-42",
+                    "execution_id": "exec-42",
+                    "subtask_id": "task-a",
+                    "agent_id": "agent-1"
+                }),
+            ),
+            make_event(
+                AuditEventKind::SubtaskCompleted,
+                "done",
+                json!({
+                    "workflow_id": "swarm-42",
+                    "execution_id": "exec-42",
+                    "subtask_id": "task-a"
+                }),
+            ),
+            make_event(
+                AuditEventKind::SwarmCompleted,
+                "finish",
+                json!({
+                    "workflow_id": "swarm-42",
+                    "execution_id": "exec-42"
+                }),
+            ),
+        ];
+
+        let debug = audit_batch_to_debug(&events);
+        assert_eq!(debug.len(), 4);
+
+        match &debug[0] {
+            DebugEvent::WorkflowStart {
+                workflow_id,
+                execution_id,
+                ..
+            } => {
+                assert_eq!(workflow_id, "swarm-42");
+                assert_eq!(execution_id, "exec-42");
+            }
+            other => panic!("expected WorkflowStart, got {other:?}"),
+        }
+
+        match &debug[1] {
+            DebugEvent::NodeStart {
+                node_id,
+                state_snapshot,
+                ..
+            } => {
+                assert_eq!(node_id, "task-a");
+                assert_eq!(state_snapshot["workflow_id"], json!("swarm-42"));
+                assert_eq!(state_snapshot["execution_id"], json!("exec-42"));
+                assert_eq!(state_snapshot["subtask_id"], json!("task-a"));
+            }
+            other => panic!("expected NodeStart, got {other:?}"),
+        }
+
+        match &debug[2] {
+            DebugEvent::NodeEnd {
+                node_id,
+                state_snapshot,
+                ..
+            } => {
+                assert_eq!(node_id, "task-a");
+                assert_eq!(state_snapshot["workflow_id"], json!("swarm-42"));
+                assert_eq!(state_snapshot["execution_id"], json!("exec-42"));
+                assert_eq!(state_snapshot["subtask_id"], json!("task-a"));
+            }
+            other => panic!("expected NodeEnd, got {other:?}"),
+        }
+
+        match &debug[3] {
+            DebugEvent::WorkflowEnd {
+                workflow_id,
+                execution_id,
+                status,
+                ..
+            } => {
+                assert_eq!(workflow_id, "swarm-42");
+                assert_eq!(execution_id, "exec-42");
+                assert_eq!(status, "completed");
+            }
+            other => panic!("expected WorkflowEnd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lifecycle_failure_path_completeness() {
+        let events = vec![
+            make_event(
+                AuditEventKind::SwarmStarted,
+                "start",
+                json!({
+                    "workflow_id": "swarm-f",
+                    "execution_id": "exec-f"
+                }),
+            ),
+            make_event(
+                AuditEventKind::SubtaskStarted,
+                "subtask started",
+                json!({
+                    "workflow_id": "swarm-f",
+                    "execution_id": "exec-f",
+                    "subtask_id": "task-f"
+                }),
+            ),
+            make_event(
+                AuditEventKind::SubtaskFailed,
+                "subtask failed",
+                json!({
+                    "workflow_id": "swarm-f",
+                    "execution_id": "exec-f",
+                    "subtask_id": "task-f"
+                }),
+            ),
+        ];
+
+        let debug = audit_batch_to_debug(&events);
+        assert_eq!(debug.len(), 3);
+        assert!(matches!(debug[0], DebugEvent::WorkflowStart { .. }));
+        assert!(matches!(debug[1], DebugEvent::NodeStart { .. }));
+        assert!(matches!(debug[2], DebugEvent::Error { .. }));
+
+        if let DebugEvent::Error { node_id, .. } = &debug[2] {
+            assert_eq!(node_id.as_deref(), Some("task-f"));
+        }
     }
 }
