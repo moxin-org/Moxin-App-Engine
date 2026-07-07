@@ -1,0 +1,13 @@
+name = "bootstrap_agent_run"
+prompt = "What file was loaded?"
+expected_text = "Bootstrapped"
+
+[[bootstrap_files]]
+path = "AGENTS.md"
+content = "Bootstrapped instructions for the DSL test."
+
+[llm]
+responses = ["Bootstrapped response"]
+
+[assert]
+contains = "Bootstrapped"

@@ -1,0 +1,9 @@
+name = "simple_agent_run"
+prompt = "Say hello"
+expected_text = "hello"
+
+[llm]
+responses = ["hello from DSL"]
+
+[assert]
+contains = "hello"

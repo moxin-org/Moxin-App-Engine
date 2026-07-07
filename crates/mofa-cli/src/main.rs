@@ -75,6 +75,7 @@ fn main() {
 
 async fn run_command(cli: Cli) -> CliResult<()> {
     use cli::Commands;
+    let output_format = cli.output_format.unwrap_or_default();
 
     // Initialize context for commands that need backend services
     let needs_context = matches!(
@@ -121,6 +122,24 @@ async fn run_command(cli: Cli) -> CliResult<()> {
 
         Some(Commands::Run { config, dora }) => {
             commands::run::run(&config, dora)?;
+        }
+
+        Some(Commands::TestDsl {
+            file,
+            artifact_out,
+            report_out,
+            report_format,
+        }) => {
+            commands::test_dsl::run(
+                &file,
+                output_format,
+                artifact_out.as_deref(),
+                report_out.as_deref(),
+                report_format,
+            )
+                .await
+                .into_report()
+                .attach_with(|| format!("running DSL test case from {}", file.display()))?;
         }
 
         #[cfg(feature = "dora")]
