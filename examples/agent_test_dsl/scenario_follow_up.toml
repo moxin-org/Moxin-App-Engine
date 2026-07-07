@@ -1,0 +1,24 @@
+agent_id = "support_agent"
+system_prompt = "You are a practical support assistant"
+tools = ["ticket_lookup"]
+
+[[turns]]
+user = "Check ticket #123"
+
+[[turns.expect]]
+kind = "call_tool"
+name = "ticket_lookup"
+
+[[turns.expect]]
+kind = "respond_containing"
+text = "ticket"
+
+[[turns]]
+user = "Great, summarize it"
+
+[[turns.expect]]
+kind = "not_call_any_tool"
+
+[[turns.expect]]
+kind = "respond_matching_regex"
+pattern = "(?i)summary|status"

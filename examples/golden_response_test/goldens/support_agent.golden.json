@@ -1,0 +1,27 @@
+{
+  "test_name": "support_agent",
+  "turns": [
+    {
+      "user_input": "Check my billing ticket #456",
+      "response": "I found ticket #456. It's a billing inquiry about your March invoice, currently in 'open' status.",
+      "tool_calls": [
+        {
+          "name": "ticket_lookup",
+          "arguments": {
+            "ticket_id": "456"
+          }
+        }
+      ]
+    },
+    {
+      "user_input": "Can you summarize the issue?",
+      "response": "Summary: Your March invoice shows a discrepancy of $15.00. The team is reviewing the charges and will update the ticket within 24 hours.",
+      "tool_calls": []
+    }
+  ],
+  "metadata": {
+    "created": "2026-04-09",
+    "model": "mock-model-v1",
+    "department": "billing"
+  }
+}
