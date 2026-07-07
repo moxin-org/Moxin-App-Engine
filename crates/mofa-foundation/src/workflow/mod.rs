@@ -51,6 +51,7 @@ mod state_graph;
 pub mod telemetry;
 
 pub mod dsl;
+pub mod versioning;
 
 // Re-export kernel workflow types for convenience
 pub use mofa_kernel::workflow::{
@@ -83,3 +84,4 @@ pub use session_recorder::{
 pub use state::*;
 pub use state_graph::{CompiledGraphImpl, StateGraphImpl};
 pub use telemetry::{ChannelTelemetryEmitter, RecordingTelemetryEmitter};
+pub use versioning::*;
