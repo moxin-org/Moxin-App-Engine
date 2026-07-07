@@ -89,7 +89,10 @@ async fn test_debug_session_api_integration() {
     recorder.end_session(session_id, "completed").await.unwrap();
 
     // Step 2: Create dashboard server with the recorder
-    let config = DashboardConfig::new().with_port(18080).with_cors(true);
+    let config = DashboardConfig::new()
+        .with_port(18080)
+        .with_cors(true)
+        .with_require_auth(false);
 
     let server = DashboardServer::new(config).with_session_recorder(recorder.clone());
 

@@ -15,7 +15,10 @@
 //! # #[tokio::main]
 //! # async fn main() {
 //! let config = DashboardConfig::new()
-//!     .with_port(8080);
+//!     .with_port(8080)
+//!     // Explicit local-dev opt-out. Production deployments should configure
+//!     // a real auth provider via `.with_auth(...)`.
+//!     .with_require_auth(false);
 //!
 //! let server = DashboardServer::new(config);
 //! // Start the server (this would block)

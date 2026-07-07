@@ -526,7 +526,8 @@ mod tests {
 
         let config = crate::dashboard::server::DashboardConfig::new()
             .with_host("127.0.0.1")
-            .with_port(0); // OS picks a free port
+            .with_port(0)
+            .with_require_auth(false); // OS picks a free port
 
         let mut server = DashboardServer::new(config);
         let router = server.build_router();

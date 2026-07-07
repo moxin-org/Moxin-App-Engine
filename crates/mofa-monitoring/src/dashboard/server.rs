@@ -44,7 +44,13 @@ pub struct DashboardConfig {
     pub ws_update_interval: Duration,
     /// Enable request tracing
     pub enable_tracing: bool,
-    /// WebSocket authentication provider (default: NoopAuthProvider)
+    /// Require a real auth provider before the dashboard server can start.
+    pub require_auth: bool,
+    /// WebSocket authentication provider.
+    ///
+    /// Defaults to [`NoopAuthProvider`], but server startup requires either a
+    /// real provider via [`DashboardConfig::with_auth`] or an explicit
+    /// [`DashboardConfig::with_require_auth(false)`] opt-out.
     pub auth_provider: Arc<dyn AuthProvider>,
     /// Prometheus export configuration
     pub prometheus_export_config: PrometheusExportConfig,
@@ -61,6 +67,7 @@ impl std::fmt::Debug for DashboardConfig {
             .field("enable_cors", &self.enable_cors)
             .field("ws_update_interval", &self.ws_update_interval)
             .field("enable_tracing", &self.enable_tracing)
+            .field("require_auth", &self.require_auth)
             .field("auth_enabled", &self.auth_provider.is_enabled())
             .field("prometheus_export_config", &self.prometheus_export_config)
             .finish()
@@ -76,6 +83,7 @@ impl Default for DashboardConfig {
             metrics_config: MetricsConfig::default(),
             ws_update_interval: Duration::from_secs(1),
             enable_tracing: true,
+            require_auth: true,
             auth_provider: Arc::new(NoopAuthProvider),
             prometheus_export_config: PrometheusExportConfig::default(),
             #[cfg(feature = "otlp-metrics")]
@@ -111,6 +119,15 @@ impl DashboardConfig {
 
     pub fn with_ws_interval(mut self, interval: Duration) -> Self {
         self.ws_update_interval = interval;
+        self
+    }
+
+    /// Require or explicitly disable dashboard authentication.
+    ///
+    /// `true` is the secure default. Set this to `false` only for trusted
+    /// local development or test environments.
+    pub fn with_require_auth(mut self, require_auth: bool) -> Self {
+        self.require_auth = require_auth;
         self
     }
 
@@ -160,6 +177,22 @@ pub struct DashboardServer {
 impl DashboardServer {
     /// Create a new dashboard server
     pub fn new(config: DashboardConfig) -> Self {
+        if config.require_auth && !config.auth_provider.is_enabled() {
+            panic!(
+                "Dashboard authentication is required by default. Configure \
+                 DashboardConfig::with_auth(...) or explicitly opt out with \
+                 DashboardConfig::with_require_auth(false) for trusted local development."
+            );
+        }
+
+        if !config.require_auth && !config.auth_provider.is_enabled() {
+            warn!(
+                "Dashboard authentication is disabled; REST and WebSocket \
+                 endpoints are publicly accessible. Only disable auth for \
+                 trusted local development or tests."
+            );
+        }
+
         let collector = Arc::new(MetricsCollector::new(config.metrics_config.clone()));
         let prometheus_export_config = config.prometheus_export_config.clone();
 
@@ -442,9 +475,11 @@ async fn serve_prometheus_metrics(exporter: Arc<PrometheusExporter>) -> impl Int
     )
 }
 
-/// Create a simple dashboard server with default configuration
+/// Create a simple dashboard server for local development without auth.
 pub fn create_dashboard(port: u16) -> DashboardServer {
-    let config = DashboardConfig::new().with_port(port);
+    let config = DashboardConfig::new()
+        .with_port(port)
+        .with_require_auth(false);
     DashboardServer::new(config)
 }
 
@@ -458,6 +493,7 @@ mod tests {
         assert_eq!(config.port, 8080);
         assert!(config.enable_cors);
         assert!(config.enable_tracing);
+        assert!(config.require_auth);
     }
 
     #[test]
@@ -465,11 +501,13 @@ mod tests {
         let config = DashboardConfig::new()
             .with_host("127.0.0.1")
             .with_port(3000)
-            .with_cors(false);
+            .with_cors(false)
+            .with_require_auth(false);
 
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 3000);
         assert!(!config.enable_cors);
+        assert!(!config.require_auth);
     }
 
     #[test]
@@ -482,9 +520,16 @@ mod tests {
         assert_eq!(addr.port(), 8080);
     }
 
-    #[tokio::test]
-    async fn test_dashboard_server_new() {
+    #[test]
+    #[should_panic(expected = "Dashboard authentication is required by default")]
+    fn test_dashboard_server_new_requires_auth_by_default() {
         let config = DashboardConfig::default();
+        let _server = DashboardServer::new(config);
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_server_new_allows_explicit_unauthenticated_mode() {
+        let config = DashboardConfig::default().with_require_auth(false);
         let server = DashboardServer::new(config);
 
         assert!(server.ws_handler.is_none());

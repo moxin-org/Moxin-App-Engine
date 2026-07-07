@@ -9,6 +9,9 @@
 //! - System resource usage
 //! - REST API for integration
 //! - WebSocket for live updates
+//!
+//! Authentication is required by default. For trusted local demos and tests,
+//! explicitly opt out with [`DashboardConfig::with_require_auth(false)`].
 
 mod api;
 mod assets;

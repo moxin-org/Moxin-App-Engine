@@ -21,7 +21,7 @@ pub trait AuthProvider: Send + Sync {
     async fn validate(&self, token: &str) -> Result<AuthInfo, String>;
 }
 
-/// Allows all connections unconditionally (default).
+/// Allows all connections unconditionally (development-only).
 pub struct NoopAuthProvider;
 
 #[async_trait]
@@ -33,7 +33,7 @@ impl AuthProvider for NoopAuthProvider {
     async fn validate(&self, _token: &str) -> Result<AuthInfo, String> {
         Ok(AuthInfo {
             client_id: "anonymous".to_string(),
-            permissions: vec!["*".to_string()],
+            permissions: vec!["read:metrics".to_string()],
         })
     }
 }
@@ -126,7 +126,9 @@ mod tests {
 
         let result = provider.validate("anything").await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().client_id, "anonymous");
+        let auth_info = result.unwrap();
+        assert_eq!(auth_info.client_id, "anonymous");
+        assert_eq!(auth_info.permissions, vec!["read:metrics".to_string()]);
     }
 
     #[tokio::test]

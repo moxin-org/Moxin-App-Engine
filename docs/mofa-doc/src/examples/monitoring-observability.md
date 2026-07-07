@@ -18,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_host("127.0.0.1")
         .with_port(8080)
         .with_cors(true)
+        .with_require_auth(false)
         .with_ws_interval(Duration::from_secs(1));
 
     // Create dashboard server

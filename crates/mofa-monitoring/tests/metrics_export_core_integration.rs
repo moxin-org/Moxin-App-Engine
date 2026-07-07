@@ -6,9 +6,10 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn metrics_route_returns_prometheus_payload() {
-    let mut server = DashboardServer::new(DashboardConfig::new()).with_prometheus_export_config(
-        PrometheusExportConfig::default().with_refresh_interval(Duration::from_millis(20)),
-    );
+    let mut server = DashboardServer::new(DashboardConfig::new().with_require_auth(false))
+        .with_prometheus_export_config(
+            PrometheusExportConfig::default().with_refresh_interval(Duration::from_millis(20)),
+        );
 
     server
         .collector()
