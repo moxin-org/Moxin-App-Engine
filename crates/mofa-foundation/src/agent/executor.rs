@@ -35,6 +35,9 @@ use mofa_kernel::agent::error::{AgentError, AgentResult};
 use mofa_kernel::agent::types::{ChatCompletionRequest, ChatMessage, LLMProvider, ToolDefinition};
 use mofa_kernel::agent::{AgentCapabilities, AgentState, MoFAAgent};
 use mofa_kernel::agent::{AgentInput, AgentOutput, InputType, OutputType};
+use mofa_kernel::agent::{AgentLifecycle, AgentMessage, AgentMessaging, AgentPluginSupport};
+use mofa_kernel::agent::context::AgentEvent;
+use mofa_kernel::plugin::AgentPlugin;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -610,6 +613,42 @@ impl MoFAAgent for AgentExecutor {
     async fn shutdown(&mut self) -> AgentResult<()> {
         // Shutdown base agent
         self.base.shutdown().await
+    }
+}
+
+// ============================================================================
+// Extension Trait Implementations (delegate to BaseAgent)
+// ============================================================================
+
+#[async_trait]
+impl AgentLifecycle for AgentExecutor {
+    async fn pause(&mut self) -> AgentResult<()> {
+        self.base.pause().await
+    }
+
+    async fn resume(&mut self) -> AgentResult<()> {
+        self.base.resume().await
+    }
+}
+
+#[async_trait]
+impl AgentMessaging for AgentExecutor {
+    async fn handle_message(&mut self, msg: AgentMessage) -> AgentResult<AgentMessage> {
+        self.base.handle_message(msg).await
+    }
+
+    async fn handle_event(&mut self, event: AgentEvent) -> AgentResult<()> {
+        self.base.handle_event(event).await
+    }
+}
+
+impl AgentPluginSupport for AgentExecutor {
+    fn register_plugin(&mut self, plugin: Box<dyn AgentPlugin>) -> AgentResult<()> {
+        self.base.register_plugin(plugin)
+    }
+
+    fn unregister_plugin(&mut self, plugin_id: &str) -> AgentResult<()> {
+        self.base.unregister_plugin(plugin_id)
     }
 }
 

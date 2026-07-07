@@ -7,7 +7,10 @@
 use mofa_kernel::agent::{
     AgentCapabilities, AgentContext, AgentError, AgentOutput, AgentResult, AgentState, AgentStats,
     InterruptResult, MoFAAgent,
+    AgentLifecycle, AgentMessage, AgentMessaging, AgentPluginSupport,
+    context::AgentEvent,
 };
+use mofa_kernel::plugin::AgentPlugin;
 
 use async_trait::async_trait;
 
@@ -38,6 +41,9 @@ pub struct BaseAgent {
     /// 统计信息
     /// Statistical Information
     stats: AgentStats,
+    /// 已注册的插件
+    /// Registered plugins
+    plugins: Vec<Box<dyn AgentPlugin>>,
 }
 
 impl BaseAgent {
@@ -52,6 +58,7 @@ impl BaseAgent {
             capabilities: AgentCapabilities::default(),
             state: AgentState::Created,
             stats: AgentStats::default(),
+            plugins: Vec::new(),
         }
     }
 
@@ -204,5 +211,188 @@ impl MoFAAgent for BaseAgent {
 
     fn state(&self) -> AgentState {
         self.state.clone()
+    }
+}
+
+// ============================================================================
+// AgentLifecycle Implementation
+// ============================================================================
+
+#[async_trait]
+impl AgentLifecycle for BaseAgent {
+    async fn pause(&mut self) -> AgentResult<()> {
+        self.transition_to(AgentState::Paused)
+    }
+
+    async fn resume(&mut self) -> AgentResult<()> {
+        self.transition_to(AgentState::Ready)
+    }
+}
+
+// ============================================================================
+// AgentMessaging Implementation
+// ============================================================================
+
+#[async_trait]
+impl AgentMessaging for BaseAgent {
+    async fn handle_message(&mut self, msg: AgentMessage) -> AgentResult<AgentMessage> {
+        Ok(AgentMessage::new("response")
+            .with_content(msg.content.clone())
+            .with_sender(self.id.clone())
+            .with_recipient(msg.sender_id.clone()))
+    }
+
+    async fn handle_event(&mut self, _event: AgentEvent) -> AgentResult<()> {
+        Ok(())
+    }
+}
+
+// ============================================================================
+// AgentPluginSupport Implementation
+// ============================================================================
+
+impl AgentPluginSupport for BaseAgent {
+    fn register_plugin(&mut self, plugin: Box<dyn AgentPlugin>) -> AgentResult<()> {
+        let id = plugin.plugin_id().to_string();
+        if self.plugins.iter().any(|p| p.plugin_id() == id) {
+            return Err(AgentError::ValidationFailed(
+                format!("Plugin '{}' is already registered", id),
+            ));
+        }
+        self.plugins.push(plugin);
+        Ok(())
+    }
+
+    fn unregister_plugin(&mut self, plugin_id: &str) -> AgentResult<()> {
+        let before = self.plugins.len();
+        self.plugins.retain(|p| p.plugin_id() != plugin_id);
+        if self.plugins.len() == before {
+            return Err(AgentError::ValidationFailed(
+                format!("Plugin '{}' not found", plugin_id),
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mofa_kernel::plugin::{PluginContext, PluginMetadata, PluginResult, PluginState, PluginType};
+    use std::any::Any;
+    use std::collections::HashMap;
+
+    /// Minimal test plugin for AgentPluginSupport tests.
+    struct TestPlugin {
+        metadata: PluginMetadata,
+        state: PluginState,
+    }
+
+    impl TestPlugin {
+        fn new(id: &str) -> Self {
+            Self {
+                metadata: PluginMetadata::new(id, id, PluginType::Custom("test".into())),
+                state: PluginState::Unloaded,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentPlugin for TestPlugin {
+        fn metadata(&self) -> &PluginMetadata { &self.metadata }
+        fn state(&self) -> PluginState { self.state.clone() }
+        async fn load(&mut self, _ctx: &PluginContext) -> PluginResult<()> { Ok(()) }
+        async fn init_plugin(&mut self) -> PluginResult<()> { Ok(()) }
+        async fn start(&mut self) -> PluginResult<()> { Ok(()) }
+        async fn stop(&mut self) -> PluginResult<()> { Ok(()) }
+        async fn unload(&mut self) -> PluginResult<()> { Ok(()) }
+        async fn execute(&mut self, input: String) -> PluginResult<String> { Ok(input) }
+        fn as_any(&self) -> &dyn Any { self }
+        fn as_any_mut(&mut self) -> &mut dyn Any { self }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> { self }
+    }
+
+    // -- AgentLifecycle tests --
+
+    #[tokio::test]
+    async fn test_lifecycle_pause_resume() {
+        let mut agent = BaseAgent::new("lc-1", "Lifecycle Agent");
+        let ctx = AgentContext::new("exec-1");
+        agent.initialize(&ctx).await.unwrap(); // → Ready
+        agent.transition_to(AgentState::Executing).unwrap();
+
+        agent.pause().await.unwrap();
+        assert_eq!(agent.state(), AgentState::Paused);
+
+        agent.resume().await.unwrap();
+        assert_eq!(agent.state(), AgentState::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_pause_wrong_state() {
+        let mut agent = BaseAgent::new("lc-2", "Lifecycle Agent");
+        let ctx = AgentContext::new("exec-2");
+        agent.initialize(&ctx).await.unwrap(); // → Ready
+
+        // Ready → Paused is not a valid transition
+        let result = agent.pause().await;
+        assert!(result.is_err());
+    }
+
+    // -- AgentMessaging tests --
+
+    #[tokio::test]
+    async fn test_messaging_handle_message() {
+        let mut agent = BaseAgent::new("msg-1", "Messaging Agent");
+        let msg = AgentMessage::new("request")
+            .with_sender("other-agent")
+            .with_recipient("msg-1");
+
+        let resp = agent.handle_message(msg).await.unwrap();
+        assert_eq!(resp.msg_type, "response");
+        assert_eq!(resp.sender_id, "msg-1");
+        assert_eq!(resp.recipient_id, "other-agent");
+    }
+
+    #[tokio::test]
+    async fn test_messaging_handle_event() {
+        let mut agent = BaseAgent::new("msg-2", "Messaging Agent");
+        let event = AgentEvent::new("test-event", serde_json::json!("payload"));
+        let result = agent.handle_event(event).await;
+        assert!(result.is_ok());
+    }
+
+    // -- AgentPluginSupport tests --
+
+    #[test]
+    fn test_plugin_register_unregister() {
+        let mut agent = BaseAgent::new("plug-1", "Plugin Agent");
+        let plugin = Box::new(TestPlugin::new("test-plugin"));
+
+        agent.register_plugin(plugin).unwrap();
+        assert_eq!(agent.plugins.len(), 1);
+
+        agent.unregister_plugin("test-plugin").unwrap();
+        assert_eq!(agent.plugins.len(), 0);
+    }
+
+    #[test]
+    fn test_plugin_register_duplicate() {
+        let mut agent = BaseAgent::new("plug-2", "Plugin Agent");
+        agent.register_plugin(Box::new(TestPlugin::new("dup"))).unwrap();
+
+        let result = agent.register_plugin(Box::new(TestPlugin::new("dup")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plugin_unregister_not_found() {
+        let mut agent = BaseAgent::new("plug-3", "Plugin Agent");
+        let result = agent.unregister_plugin("nonexistent");
+        assert!(result.is_err());
     }
 }
