@@ -7,6 +7,9 @@
 // orchestrator module - Model Lifecycle & Allocation
 pub mod orchestrator;
 
+// model_pool module - Model lifecycle management with LRU cache
+pub mod model_pool;
+
 // hardware discovery module
 pub mod hardware;
 

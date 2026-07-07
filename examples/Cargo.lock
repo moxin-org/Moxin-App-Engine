@@ -4565,6 +4565,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "model_pool_demo"
+version = "0.1.0"
+dependencies = [
+ "mofa-foundation",
+]
+
+[[package]]
 name = "mofa-cli"
 version = "0.1.0"
 dependencies = [

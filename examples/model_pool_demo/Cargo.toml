@@ -1,0 +1,8 @@
+[package]
+name = "model_pool_demo"
+version = "0.1.0"
+edition = "2024"
+description = "Demonstrates ModelPool lifecycle: LRU eviction, idle timeout, memory tracking, and graceful cleanup"
+
+[dependencies]
+mofa-foundation = { path = "../../crates/mofa-foundation" }
