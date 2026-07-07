@@ -475,6 +475,8 @@ impl CircuitBreaker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
 
     // -- Backoff tests --
 
@@ -777,5 +779,82 @@ mod tests {
         assert!(result.is_err());
         // Returns the LAST error
         assert!(result.unwrap_err().to_string().contains("b"));
+    }
+
+    // -- CircuitBreaker concurrency tests --
+
+    #[tokio::test]
+    async fn test_circuit_breaker_concurrent_failures_open() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 10,
+            recovery_timeout: Duration::from_secs(60),
+            success_threshold: 5,
+        };
+        let cb = CircuitBreaker::new(config);
+        let cb_arc = Arc::new(cb);
+
+        let barrier = Arc::new(Barrier::new(10));
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let cb = cb_arc.clone();
+            let bar = barrier.clone();
+            let h = tokio::spawn(async move {
+                bar.wait().await;
+                cb.call(|| async { Err::<String, _>(GlobalError::llm("fail")) }).await
+            });
+            handles.push(h);
+        }
+
+        // Wait for all tasks to complete
+        for h in handles {
+            let _ = h.await;
+        }
+
+        // After 10 failures (threshold), circuit should be OPEN
+        assert_eq!(cb_arc.state(), CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_concurrent_successes_after_failure() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 5,
+            recovery_timeout: Duration::from_secs(1),
+            success_threshold: 3,
+        };
+        let cb = CircuitBreaker::new(config);
+        let cb_arc = Arc::new(cb);
+
+        // First, force circuit open with 5 failures
+        for _ in 0..5 {
+            let _ = cb_arc
+                .call(|| async { Err::<String, _>(GlobalError::llm("fail")) })
+                .await;
+        }
+        assert_eq!(cb_arc.state(), CircuitState::Open);
+
+        // Wait for recovery timeout to allow half-open
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Now send 3 concurrent successes; after 1 success (threshold=3? actually threshold is number of successes required) but we send 3 to ensure it closes
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = vec![];
+
+        for _ in 0..3 {
+            let cb = cb_arc.clone();
+            let bar = barrier.clone();
+            let h = tokio::spawn(async move {
+                bar.wait().await;
+                cb.call(|| async { Ok::<String, _>("ok".to_string()) }).await
+            });
+            handles.push(h);
+        }
+
+        for h in handles {
+            let _ = h.await;
+        }
+
+        // After enough successes in half-open, circuit should be CLOSED
+        assert_eq!(cb_arc.state(), CircuitState::Closed);
     }
 }
