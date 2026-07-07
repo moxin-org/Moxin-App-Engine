@@ -24,6 +24,7 @@
 //! ```
 
 mod dashboard;
+pub mod observatory;
 pub mod tracing;
 
 pub use dashboard::{
@@ -34,3 +35,4 @@ pub use dashboard::{
     PrometheusExporter, ServerState, SystemMetrics, SystemStatus, TokenAuthProvider,
     WebSocketClient, WebSocketHandler, WebSocketMessage, WorkflowMetrics,
 };
+pub use observatory::{CognitiveObservatory, ObservatoryConfig};
