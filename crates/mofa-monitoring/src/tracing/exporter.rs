@@ -317,6 +317,28 @@ impl JaegerExporter {
             Err("No collector endpoint configured".to_string())
         }
     }
+}
+
+#[async_trait]
+impl TracingExporter for JaegerExporter {
+    async fn export(&self, spans: Vec<SpanData>) -> Result<(), String> {
+        if spans.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let mut buffer = self.buffer.write().await;
+            buffer.extend(spans);
+
+            if buffer.len() >= self.config.batch_size {
+                let to_export: Vec<_> = buffer.drain(..).collect();
+                drop(buffer);
+                return self.send_to_collector(&to_export).await;
+            }
+        }
+
+        Ok(())
+    }
 
     async fn shutdown(&self) -> Result<(), String> {
         self.force_flush().await?;
@@ -727,6 +749,27 @@ mod tests {
 
         let spans = vec![create_test_span()];
         let result = composite.export(spans).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_jaeger_exporter_buffers_spans() {
+        let config = ExporterConfig::new("test-service").with_batch_size(100);
+        let jaeger_config = JaegerConfig::default();
+        let exporter = JaegerExporter::new(config, jaeger_config);
+
+        // Export fewer spans than batch_size — they should be buffered, not sent.
+        let spans = vec![create_test_span(), create_test_span()];
+        let result = exporter.export(spans).await;
+        assert!(result.is_ok());
+
+        // Verify the exporter can be used as a dyn TracingExporter.
+        let dyn_exporter: Arc<dyn TracingExporter> = Arc::new({
+            let config = ExporterConfig::new("test-service").with_batch_size(100);
+            let jaeger_config = JaegerConfig::default();
+            JaegerExporter::new(config, jaeger_config)
+        });
+        let result = dyn_exporter.export(vec![create_test_span()]).await;
         assert!(result.is_ok());
     }
 }
