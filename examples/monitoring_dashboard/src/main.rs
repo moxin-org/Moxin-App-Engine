@@ -32,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("╚══════════════════════════════════════════════════════════════╝");
     // Create dashboard configuration
     let config = DashboardConfig::new()
-        .with_host("127.0.0.1")
+        // Bind externally so Prometheus in Docker can scrape this example.
+        .with_host("0.0.0.0")
         .with_port(8080)
         .with_cors(true)
         .with_ws_interval(Duration::from_secs(1));
@@ -58,6 +59,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Start metrics collection background task
     collector.clone().start_collection();
+
+    // Ensure Prometheus exporter has an initial payload and keeps refreshing.
+    if let Some(exporter) = server.prometheus_exporter() {
+        exporter.refresh_once().await?;
+        let _prometheus_worker = exporter.start();
+    }
 
     // Get WebSocket handler for sending updates
     if let Some(ws_handler) = server.ws_handler() {
@@ -99,7 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("╚══════════════════════════════════════════════════════════════╝");
 
     // Start the server
-    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+    // Bind externally so both host and containers can reach the dashboard.
+    let addr: SocketAddr = "0.0.0.0:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     info!("🚀 Server listening on http://{}", addr);
