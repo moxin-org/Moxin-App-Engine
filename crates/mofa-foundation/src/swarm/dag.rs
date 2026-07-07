@@ -181,13 +181,46 @@ impl Default for DependencyEdge {
 
 // SubtaskDAG
 /// Directed Acyclic Graph representing a decomposed task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The `id_to_index` lookup table is rebuilt automatically during
+/// deserialization so that `find_by_id` works after a serde round-trip.
+#[derive(Debug, Clone, Serialize)]
 pub struct SubtaskDAG {
     pub id: String,
     pub name: String,
     graph: DiGraph<SwarmSubtask, DependencyEdge>,
     #[serde(skip)]
     id_to_index: HashMap<String, NodeIndex>,
+}
+
+impl<'de> Deserialize<'de> for SubtaskDAG {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        /// Helper that mirrors the serialized fields (without id_to_index).
+        #[derive(Deserialize)]
+        struct SubtaskDAGFields {
+            id: String,
+            name: String,
+            graph: DiGraph<SwarmSubtask, DependencyEdge>,
+        }
+
+        let raw = SubtaskDAGFields::deserialize(deserializer)?;
+
+        // Rebuild the lookup index from the deserialized graph.
+        let mut id_to_index = HashMap::new();
+        for idx in raw.graph.node_indices() {
+            id_to_index.insert(raw.graph[idx].id.clone(), idx);
+        }
+
+        Ok(SubtaskDAG {
+            id: raw.id,
+            name: raw.name,
+            graph: raw.graph,
+            id_to_index,
+        })
+    }
 }
 
 impl SubtaskDAG {
@@ -1108,5 +1141,28 @@ mod tests {
         let path = dag.critical_path().unwrap();
         assert!(path.is_empty());
         assert_eq!(dag.critical_path_duration_secs().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_preserves_index() {
+        let mut dag = SubtaskDAG::new("roundtrip");
+        let a = dag.add_task(SwarmSubtask::new("search", "Search the web"));
+        let b = dag.add_task(SwarmSubtask::new("analyze", "Analyze results"));
+        dag.add_dependency(a, b).unwrap();
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&dag).unwrap();
+        let restored: SubtaskDAG = serde_json::from_str(&json).unwrap();
+
+        // find_by_id must work after deserialization
+        assert!(restored.find_by_id("search").is_some());
+        assert!(restored.find_by_id("analyze").is_some());
+        assert_eq!(restored.find_by_id("nonexistent"), None);
+        assert_eq!(restored.task_count(), 2);
+
+        // DAG operations must still function correctly
+        let ready = restored.ready_tasks();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(restored.get_task(ready[0]).unwrap().id, "search");
     }
 }
