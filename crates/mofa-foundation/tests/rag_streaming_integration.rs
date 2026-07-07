@@ -311,3 +311,93 @@ async fn integration_error_recovery_stream() {
     let first = s.next().await.unwrap();
     assert!(first.is_err());
 }
+
+
+#[tokio::test]
+async fn test_stategraph_multi_turn() {
+    use mofa_foundation::workflow::StateGraphImpl;
+    use mofa_kernel::workflow::{
+        Command, CompiledGraph, JsonState, NodeFunc, RuntimeContext, StateGraph, StreamEvent, END,
+        START,
+    };
+    use serde_json::json;
+
+    struct TurnNode {
+        id: &'static str,
+        turn: i64,
+    }
+
+    #[async_trait]
+    impl NodeFunc<JsonState> for TurnNode {
+        async fn call(
+            &self,
+            _state: &mut JsonState,
+            _ctx: &RuntimeContext,
+        ) -> AgentResult<Command> {
+            Ok(Command::new()
+                .update("turn", json!(self.turn))
+                .continue_())
+        }
+
+        fn name(&self) -> &str {
+            self.id
+        }
+    }
+
+    let graph_id = "rag_integration_stategraph_multi_turn";
+    let mut graph = StateGraphImpl::<JsonState>::new(graph_id);
+
+    graph
+        .add_node(
+            "round1",
+            Box::new(TurnNode {
+                id: "round1",
+                turn: 1,
+            }),
+        )
+        .add_node(
+            "round2",
+            Box::new(TurnNode {
+                id: "round2",
+                turn: 2,
+            }),
+        )
+        .add_node(
+            "round3",
+            Box::new(TurnNode {
+                id: "round3",
+                turn: 3,
+            }),
+        )
+        .add_edge(START, "round1")
+        .add_edge("round1", "round2")
+        .add_edge("round2", "round3")
+        .add_edge("round3", END);
+
+    let compiled = graph.compile().expect("compile StateGraph");
+    let config = Some(RuntimeContext::new(graph_id));
+    let mut stream = compiled.stream(JsonState::new(), config);
+
+    let mut chunks: Vec<StreamEvent<JsonState>> = vec![];
+    while let Some(item) = stream.next().await {
+        let event = item.expect("stream transport error");
+        chunks.push(event);
+        if chunks
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::NodeEnd { .. }))
+            .count()
+            >= 3
+        {
+            break;
+        }
+    }
+
+    let node_ends = chunks
+        .iter()
+        .filter(|e| matches!(e, StreamEvent::NodeEnd { .. }))
+        .count();
+    assert_eq!(
+        node_ends, 3,
+        "expected three NodeEnd events (three turns); stream halted early"
+    );
+}
