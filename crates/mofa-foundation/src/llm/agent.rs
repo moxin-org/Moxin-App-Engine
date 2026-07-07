@@ -3826,6 +3826,18 @@ fn create_provider_from_config(
 
             Ok(OpenAIProvider::with_config(openai_config))
         }
+        "ollama" => {
+            let base_url = config
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+            let model = config
+                .model
+                .clone()
+                .unwrap_or_else(|| "llama3".to_string());
+
+            Ok(OpenAIProvider::local(base_url, model))
+        }
         "azure" => {
             let endpoint = config.base_url.clone().ok_or_else(|| {
                 LLMError::ConfigError("Azure endpoint (base_url) not set".to_string())

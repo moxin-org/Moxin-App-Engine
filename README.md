@@ -206,6 +206,12 @@ MoFA adopts a **layered microkernel architecture** with `mofa-kernel` at its cor
 ### 4. LLM and AI Capabilities
 - **LLM Abstraction Layer**: Standardized LLM integration interface
 - **OpenAI Support**: Built-in OpenAI API integration
+- **Providers**:
+
+| Provider | Description | Environment |
+|---|---|---|
+| ollama | Local Ollama (llama3, mistral, etc.) | `OLLAMA_HOST` (optional, default localhost:11434) |
+
 - **ReAct Pattern**: Agent framework based on reasoning and action
 - **Multi-Agent Collaboration**: LLM-driven agent coordination, supporting multiple collaboration modes:
   - **Request-Response**: One-to-one deterministic tasks with synchronous replies

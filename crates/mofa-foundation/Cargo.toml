@@ -15,6 +15,7 @@ publish = true
 
 [features]
 default = []
+ollama = []
 # Enable PostgreSQL persistence backend
 persistence-postgres = ["dep:sqlx"]
 # Enable MySQL/MariaDB persistence backend
