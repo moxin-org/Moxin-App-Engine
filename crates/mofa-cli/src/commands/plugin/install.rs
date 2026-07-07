@@ -201,7 +201,7 @@ async fn install_from_local_path(
     plugin_name: &str,
     source_path: &Path,
 ) -> Result<PathBuf, CliError> {
-    let plugins_dir = data_dir.join("plugins");
+    let plugins_dir = external_plugins_dir(data_dir);
     tokio::fs::create_dir_all(&plugins_dir)
         .await
         .map_err(|e| CliError::PluginError(format!("Failed to create plugins directory: {}", e)))?;
@@ -232,7 +232,7 @@ async fn install_from_url(
     url: &str,
     expected_checksum: Option<&str>,
 ) -> Result<PathBuf, CliError> {
-    let plugins_dir = data_dir.join("plugins");
+    let plugins_dir = external_plugins_dir(data_dir);
     tokio::fs::create_dir_all(&plugins_dir)
         .await
         .map_err(|e| CliError::PluginError(format!("Failed to create plugins directory: {}", e)))?;
@@ -494,6 +494,10 @@ enum PluginSource {
     Registry(String),
 }
 
+fn external_plugins_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("plugins").join("installed")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,7 +653,7 @@ mod tests {
 
         // Verify plugin was installed (plugin name is the full path, sanitized)
         let plugin_name = plugin_path_str.replace('/', "_").replace('\\', "_");
-        let plugin_dir = ctx.data_dir.join("plugins").join(&plugin_name);
+        let plugin_dir = external_plugins_dir(&ctx.data_dir).join(&plugin_name);
         assert!(
             plugin_dir.exists(),
             "Plugin dir should exist at: {}",

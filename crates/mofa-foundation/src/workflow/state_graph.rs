@@ -13,6 +13,7 @@ use mofa_kernel::workflow::{
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
@@ -22,10 +23,43 @@ use tracing::{Instrument, debug, error, info, warn};
 use super::fault_tolerance::{
     CircuitBreakerRegistry, NodeExecutionOutcome, execute_with_policy, new_circuit_registry,
 };
+use super::execution_event::ExecutionSpan;
 use mofa_kernel::workflow::policy::NodePolicy;
 
 /// Type alias for node ID
 pub type NodeId = String;
+
+fn state_hash<S: GraphState>(state: &S) -> Option<String> {
+    state.to_json().ok().map(|value| {
+        let mut hasher = DefaultHasher::new();
+        value.to_string().hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    })
+}
+
+fn command_type(command: &Command) -> &'static str {
+    match &command.control {
+        ControlFlow::Continue => "Continue",
+        ControlFlow::Goto(_) => "Goto",
+        ControlFlow::Return => "Return",
+        ControlFlow::Send(_) => "Send",
+        _ => "Unknown",
+    }
+}
+
+fn log_execution_span(span: &ExecutionSpan) {
+    info!(
+        node_id = %span.node_id,
+        start_time = span.start_time,
+        end_time = span.end_time,
+        duration_ms = span.duration_ms,
+        input_state_hash = ?span.input_state_hash,
+        output_state_hash = ?span.output_state_hash,
+        command_type = %span.command_type,
+        error = ?span.error,
+        "execution_span"
+    );
+}
 
 /// StateGraph implementation - LangGraph-inspired API
 ///
@@ -779,6 +813,8 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
 
                 if nodes_to_execute.len() == 1 {
                     let node_id = nodes_to_execute[0].clone();
+                    let start_time = DebugEvent::now_ms();
+                    let input_state_hash = state_hash(&state);
                     let node = match nodes.get(&node_id) {
                         Some(n) => n,
                         None => {
@@ -828,6 +864,18 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                             continue;
                         }
                         Err(NodeExecutionOutcome::Error(e)) => {
+                            let end_time = DebugEvent::now_ms();
+                            let span = ExecutionSpan {
+                                node_id: node_id.clone(),
+                                start_time,
+                                end_time,
+                                duration_ms: end_time.saturating_sub(start_time),
+                                input_state_hash,
+                                output_state_hash: state_hash(&state),
+                                command_type: "Error".to_string(),
+                                error: Some(e.to_string()),
+                            };
+                            log_execution_span(&span);
                             let _ = tx
                                 .send(Ok(StreamEvent::Error {
                                     node_id: Some(node_id),
@@ -867,6 +915,19 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                         }
                     }
 
+                    let end_time = DebugEvent::now_ms();
+                    let span = ExecutionSpan {
+                        node_id: node_id.clone(),
+                        start_time,
+                        end_time,
+                        duration_ms: end_time.saturating_sub(start_time),
+                        input_state_hash,
+                        output_state_hash: state_hash(&state),
+                        command_type: command_type(&command).to_string(),
+                        error: None,
+                    };
+                    log_execution_span(&span);
+
                     // Send end event — abort if receiver disconnected
                     if tx
                         .send(Ok(StreamEvent::NodeEnd {
@@ -894,8 +955,11 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                         }
                     }
                 } else {
+                    let mut parallel_spans = HashMap::new();
                     // Send start events for parallel batch — abort if receiver disconnected
                     for node_id in &nodes_to_execute {
+                        parallel_spans
+                            .insert(node_id.clone(), (DebugEvent::now_ms(), state_hash(&state)));
                         if tx
                             .send(Ok(StreamEvent::NodeStart {
                                 node_id: node_id.clone(),
@@ -931,6 +995,9 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                     };
 
                     for (node_id, command) in commands {
+                        let (start_time, input_state_hash) = parallel_spans
+                            .remove(&node_id)
+                            .unwrap_or((DebugEvent::now_ms(), state_hash(&state)));
                         for update in &command.updates {
                             let current = state.get_value(&update.key);
                             let new_value = if let Some(reducer) = reducers.get(&update.key) {
@@ -959,6 +1026,19 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
                                 return;
                             }
                         }
+
+                        let end_time = DebugEvent::now_ms();
+                        let span = ExecutionSpan {
+                            node_id: node_id.clone(),
+                            start_time,
+                            end_time,
+                            duration_ms: end_time.saturating_sub(start_time),
+                            input_state_hash,
+                            output_state_hash: state_hash(&state),
+                            command_type: command_type(&command).to_string(),
+                            error: None,
+                        };
+                        log_execution_span(&span);
 
                         if tx
                             .send(Ok(StreamEvent::NodeEnd {

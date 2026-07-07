@@ -13,6 +13,19 @@ use serde::{Deserialize, Serialize};
 /// Current schema version for execution events
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Lightweight structured trace emitted for each node execution.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionSpan {
+    pub node_id: String,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub duration_ms: u64,
+    pub input_state_hash: Option<String>,
+    pub output_state_hash: Option<String>,
+    pub command_type: String,
+    pub error: Option<String>,
+}
+
 /// Canonical execution event types for workflow execution tracing
 ///
 /// This enum defines the core events that can occur during workflow execution.
