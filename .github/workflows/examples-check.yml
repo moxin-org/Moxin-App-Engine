@@ -27,3 +27,6 @@ jobs:
       - name: cargo check examples manifest
         run: cargo check --manifest-path examples/Cargo.toml
 
+      - name: cargo test examples manifest
+        run: cargo test --manifest-path examples/Cargo.toml
+
