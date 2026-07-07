@@ -127,6 +127,68 @@ pub enum DebugEvent {
     },
 }
 
+impl std::fmt::Display for DebugEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WorkflowStart {
+                workflow_id,
+                execution_id,
+                timestamp_ms,
+            } => write!(
+                f,
+                "[{timestamp_ms}] workflow_start: workflow={workflow_id} execution={execution_id}"
+            ),
+            Self::NodeStart {
+                node_id,
+                timestamp_ms,
+                ..
+            } => write!(f, "[{timestamp_ms}] node_start: node={node_id}"),
+            Self::StateChange {
+                node_id,
+                timestamp_ms,
+                key,
+                old_value,
+                new_value,
+            } => {
+                let old = match old_value {
+                    Some(v) => v.to_string(),
+                    None => "<new>".to_string(),
+                };
+                write!(
+                    f,
+                    "[{timestamp_ms}] state_change: node={node_id} key={key} {old} -> {new_value}"
+                )
+            }
+            Self::NodeEnd {
+                node_id,
+                timestamp_ms,
+                duration_ms,
+                ..
+            } => write!(
+                f,
+                "[{timestamp_ms}] node_end: node={node_id} duration={duration_ms}ms"
+            ),
+            Self::WorkflowEnd {
+                workflow_id,
+                execution_id,
+                timestamp_ms,
+                status,
+            } => write!(
+                f,
+                "[{timestamp_ms}] workflow_end: workflow={workflow_id} execution={execution_id} status={status}"
+            ),
+            Self::Error {
+                node_id,
+                timestamp_ms,
+                error,
+            } => {
+                let node = node_id.as_deref().unwrap_or("<global>");
+                write!(f, "[{timestamp_ms}] error: node={node} {error}")
+            }
+        }
+    }
+}
+
 impl DebugEvent {
     /// Get the timestamp of this event in milliseconds since epoch
     pub fn timestamp_ms(&self) -> u64 {
@@ -677,5 +739,114 @@ mod tests {
         let query = SessionQuery::default();
         let s = make_session("s1", "wf", "completed", 1000, Some(2000));
         assert!(query.matches(&s));
+    }
+
+    // --- Display impl ---
+
+    #[test]
+    fn test_display_workflow_start() {
+        let event = DebugEvent::WorkflowStart {
+            workflow_id: "wf-1".into(),
+            execution_id: "exec-1".into(),
+            timestamp_ms: 1000,
+        };
+        let s = event.to_string();
+        assert!(s.contains("[1000]"));
+        assert!(s.contains("workflow_start"));
+        assert!(s.contains("workflow=wf-1"));
+        assert!(s.contains("execution=exec-1"));
+    }
+
+    #[test]
+    fn test_display_node_start() {
+        let event = DebugEvent::NodeStart {
+            node_id: "process".into(),
+            timestamp_ms: 2000,
+            state_snapshot: json!({}),
+        };
+        let s = event.to_string();
+        assert!(s.contains("[2000]"));
+        assert!(s.contains("node_start"));
+        assert!(s.contains("node=process"));
+    }
+
+    #[test]
+    fn test_display_state_change_with_old_value() {
+        let event = DebugEvent::StateChange {
+            node_id: "n1".into(),
+            timestamp_ms: 3000,
+            key: "count".into(),
+            old_value: Some(json!(0)),
+            new_value: json!(1),
+        };
+        let s = event.to_string();
+        assert!(s.contains("[3000]"));
+        assert!(s.contains("state_change"));
+        assert!(s.contains("key=count"));
+        assert!(s.contains("0 -> 1"));
+    }
+
+    #[test]
+    fn test_display_state_change_new_key() {
+        let event = DebugEvent::StateChange {
+            node_id: "n1".into(),
+            timestamp_ms: 3500,
+            key: "name".into(),
+            old_value: None,
+            new_value: json!("alice"),
+        };
+        let s = event.to_string();
+        assert!(s.contains("<new> -> "));
+    }
+
+    #[test]
+    fn test_display_node_end() {
+        let event = DebugEvent::NodeEnd {
+            node_id: "n1".into(),
+            timestamp_ms: 4000,
+            state_snapshot: json!({}),
+            duration_ms: 150,
+        };
+        let s = event.to_string();
+        assert!(s.contains("node_end"));
+        assert!(s.contains("duration=150ms"));
+    }
+
+    #[test]
+    fn test_display_workflow_end() {
+        let event = DebugEvent::WorkflowEnd {
+            workflow_id: "wf-1".into(),
+            execution_id: "exec-1".into(),
+            timestamp_ms: 5000,
+            status: "completed".into(),
+        };
+        let s = event.to_string();
+        assert!(s.contains("workflow_end"));
+        assert!(s.contains("status=completed"));
+    }
+
+    #[test]
+    fn test_display_error_with_node() {
+        let event = DebugEvent::Error {
+            node_id: Some("n2".into()),
+            timestamp_ms: 6000,
+            error: "timeout exceeded".into(),
+        };
+        let s = event.to_string();
+        assert!(s.contains("error"));
+        assert!(s.contains("node=n2"));
+        assert!(s.contains("timeout exceeded"));
+    }
+
+    #[test]
+    fn test_display_error_without_node() {
+        let event = DebugEvent::Error {
+            node_id: None,
+            timestamp_ms: 7000,
+            error: "global failure".into(),
+        };
+        let s = event.to_string();
+        assert!(s.contains("node=<global>"));
+        assert!(s.contains("global failure"));
     }
 }
