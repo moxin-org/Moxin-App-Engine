@@ -160,7 +160,7 @@ mod tests {
                 assert_eq!(subject, "agent-1");
                 assert!(!allowed);
             }
-            _ => panic!("Wrong event type"),
+            _ => panic!("Expected PermissionCheck variant, got: {:?}", event),
         }
     }
 }
