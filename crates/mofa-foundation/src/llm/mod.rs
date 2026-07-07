@@ -368,7 +368,7 @@ pub use anthropic::{AnthropicConfig, AnthropicProvider};
 // Re-export Google Gemini Provider
 pub use google::{GeminiConfig, GeminiProvider};
 // Re-export Ollama Provider
-pub use ollama::{OllamaConfig, OllamaProvider};
+pub use ollama::OllamaProvider;
 
 // Re-export 高级 API
 // Re-export Advanced API

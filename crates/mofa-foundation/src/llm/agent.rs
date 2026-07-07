@@ -29,9 +29,7 @@ use super::client::{ChatSession, LLMClient};
 use super::provider::{ChatStream, LLMProvider};
 use super::tool_executor::ToolExecutor;
 use super::types::{ChatMessage, LLMError, LLMResult, Tool};
-use crate::llm::{
-    AnthropicConfig, AnthropicProvider, GeminiConfig, GeminiProvider, OllamaConfig, OllamaProvider,
-};
+use crate::llm::{AnthropicConfig, AnthropicProvider, GeminiConfig, GeminiProvider};
 use crate::prompt;
 use futures::{Stream, StreamExt};
 use mofa_kernel::agent::AgentMetadata;
@@ -3719,19 +3717,19 @@ impl LLMAgentBuilder {
                 Arc::new(GeminiProvider::with_config(cfg))
             }
             "ollama" => {
-                let mut ollama_config = OllamaConfig::new();
-                ollama_config = ollama_config.with_base_url(&provider.api_base);
-                ollama_config = ollama_config.with_model(&agent.model_name);
+                let mut openai_config = OpenAIConfig::new("ollama")
+                    .with_base_url(&provider.api_base)
+                    .with_model(&agent.model_name);
 
                 if let Some(temp) = agent.temperature {
-                    ollama_config = ollama_config.with_temperature(temp);
+                    openai_config = openai_config.with_temperature(temp);
                 }
 
                 if let Some(max_tokens) = agent.max_completion_tokens {
-                    ollama_config = ollama_config.with_max_tokens(max_tokens as u32);
+                    openai_config = openai_config.with_max_tokens(max_tokens as u32);
                 }
 
-                Arc::new(OllamaProvider::with_config(ollama_config))
+                Arc::new(OpenAIProvider::with_config(openai_config))
             }
             other => {
                 return Err(LLMError::Other(format!(

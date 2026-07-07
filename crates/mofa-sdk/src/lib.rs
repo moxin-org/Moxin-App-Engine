@@ -503,7 +503,7 @@ pub mod llm {
     pub use crate::llm_tools::ToolPluginExecutor;
     pub use mofa_foundation::llm::anthropic::{AnthropicConfig, AnthropicProvider};
     pub use mofa_foundation::llm::google::{GeminiConfig, GeminiProvider};
-    pub use mofa_foundation::llm::ollama::{OllamaConfig, OllamaProvider};
+    pub use mofa_foundation::llm::ollama::OllamaProvider;
     pub use mofa_foundation::llm::openai::{OpenAIConfig, OpenAIProvider};
     pub use mofa_foundation::llm::*;
 
@@ -541,13 +541,39 @@ pub mod llm {
         Ok(OpenAIProvider::with_config(config))
     }
 
-    /// Create an Ollama provider from environment variables (no API key required).
+    /// Create an Ollama-backed [`OpenAIProvider`] from environment variables (no API key required).
     ///
     /// Reads:
-    /// - `OLLAMA_BASE_URL`: base URL without `/v1` suffix, e.g. `http://localhost:11434` (optional)
-    /// - `OLLAMA_MODEL`: model name, e.g. `llama3` (optional)
-    pub fn ollama_from_env() -> Result<OllamaProvider, crate::llm::LLMError> {
-        Ok(crate::llm::OllamaProvider::from_env())
+    /// - `OLLAMA_HOST`: optional host (default `localhost:11434`); may be `host:port` or a full `http://` URL
+    /// - `OLLAMA_BASE_URL`: optional base URL (e.g. `http://localhost:11434`); used if `OLLAMA_HOST` is unset
+    /// - `OLLAMA_MODEL`: model name, e.g. `llama3` (optional, default `llama3`)
+    pub fn ollama_from_env() -> Result<OpenAIProvider, crate::llm::LLMError> {
+        let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_string());
+        let mut cfg = OpenAIConfig::new("ollama");
+        let base_url = if let Ok(host) = std::env::var("OLLAMA_HOST") {
+            let h = host.trim();
+            let base = if h.starts_with("http://") || h.starts_with("https://") {
+                h.trim_end_matches('/').to_string()
+            } else {
+                format!("http://{}", h.trim_end_matches('/'))
+            };
+            if base.ends_with("/v1") {
+                base
+            } else {
+                format!("{}/v1", base)
+            }
+        } else if let Ok(base_url) = std::env::var("OLLAMA_BASE_URL") {
+            let base = base_url.trim().trim_end_matches('/');
+            if base.ends_with("/v1") {
+                base.to_string()
+            } else {
+                format!("{}/v1", base)
+            }
+        } else {
+            "http://localhost:11434/v1".to_string()
+        };
+        cfg = cfg.with_base_url(base_url).with_model(model);
+        Ok(OpenAIProvider::with_config(cfg))
     }
 }
 
