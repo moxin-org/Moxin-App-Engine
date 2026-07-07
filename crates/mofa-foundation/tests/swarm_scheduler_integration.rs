@@ -27,7 +27,8 @@ async fn sequential_scheduler_executes_via_pattern_and_marks_completed() {
     let idx_b = dag.add_task(SwarmSubtask::new("B", "Task B"));
     dag.add_dependency(idx_a, idx_b).unwrap();
 
-    let scheduler = CoordinationPattern::Sequential.into_scheduler();
+    let scheduler = CoordinationPattern::Sequential.into_scheduler()
+        .expect("Sequential scheduler should be implemented");
     let _summary = scheduler.execute(&mut dag, ok_executor()).await.unwrap();
 
     assert_eq!(
@@ -60,7 +61,8 @@ async fn parallel_scheduler_executes_via_pattern_and_respects_dependencies() {
         })
     });
 
-    let scheduler = CoordinationPattern::Parallel.into_scheduler();
+    let scheduler = CoordinationPattern::Parallel.into_scheduler()
+        .expect("Parallel scheduler should be implemented");
     let _summary = scheduler.execute(&mut dag, exec).await.unwrap();
 
     for (idx, task) in dag.all_tasks() {

@@ -711,10 +711,12 @@ mod tests {
 
     #[test]
     fn test_into_scheduler() {
-        let seq = CoordinationPattern::Sequential.into_scheduler();
+        let seq = CoordinationPattern::Sequential.into_scheduler()
+            .expect("Sequential scheduler should be implemented");
         assert_eq!(seq.pattern(), CoordinationPattern::Sequential);
 
-        let par = CoordinationPattern::Parallel.into_scheduler();
+        let par = CoordinationPattern::Parallel.into_scheduler()
+            .expect("Parallel scheduler should be implemented");
         assert_eq!(par.pattern(), CoordinationPattern::Parallel);
     }
 

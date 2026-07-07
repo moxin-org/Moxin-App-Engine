@@ -1,9 +1,10 @@
 //! swarm coordination patterns
 
 use serde::{Deserialize, Serialize};
+use mofa_kernel::agent::types::error::GlobalError;
 
 /// Coordination pattern for a swarm of agents
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CoordinationPattern {
     #[default]
@@ -78,13 +79,39 @@ impl CoordinationPattern {
     }
 
     /// create the scheduler for this pattern
-    pub fn into_scheduler(self) -> Box<dyn crate::swarm::SwarmScheduler> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GlobalError::Other`] if the scheduler for this pattern
+    /// is not yet implemented. Currently implemented patterns:
+    /// - Sequential
+    /// - Parallel
+    ///
+    /// Not yet implemented (Phase 2):
+    /// - Debate
+    /// - Consensus
+    /// - MapReduce
+    /// - Supervision
+    /// - Routing
+    pub fn into_scheduler(self) -> Result<Box<dyn crate::swarm::SwarmScheduler>, GlobalError> {
         match self {
-            Self::Sequential => Box::new(crate::swarm::SequentialScheduler::new()),
-            Self::Parallel => Box::new(crate::swarm::ParallelScheduler::new()),
-            other => {
-                unimplemented!("Scheduler for `{other}` pattern is not yet implemented (Phase 2)")
-            }
+            Self::Sequential => Ok(Box::new(crate::swarm::SequentialScheduler::new())),
+            Self::Parallel => Ok(Box::new(crate::swarm::ParallelScheduler::new())),
+            Self::Debate => Err(GlobalError::Other(
+                "Debate pattern scheduler not yet implemented (Phase 2)".to_string(),
+            )),
+            Self::Consensus => Err(GlobalError::Other(
+                "Consensus pattern scheduler not yet implemented (Phase 2)".to_string(),
+            )),
+            Self::MapReduce => Err(GlobalError::Other(
+                "MapReduce pattern scheduler not yet implemented (Phase 2)".to_string(),
+            )),
+            Self::Supervision => Err(GlobalError::Other(
+                "Supervision pattern scheduler not yet implemented (Phase 2)".to_string(),
+            )),
+            Self::Routing => Err(GlobalError::Other(
+                "Routing pattern scheduler not yet implemented (Phase 2)".to_string(),
+            )),
         }
     }
 }
@@ -121,5 +148,38 @@ mod tests {
         assert!(!CoordinationPattern::Sequential.requires_leader());
         assert!(CoordinationPattern::Debate.requires_leader());
         assert!(CoordinationPattern::Supervision.requires_leader());
+    }
+
+    #[test]
+    fn test_into_scheduler_sequential_and_parallel() {
+        // These should succeed
+        assert!(CoordinationPattern::Sequential.into_scheduler().is_ok());
+        assert!(CoordinationPattern::Parallel.into_scheduler().is_ok());
+    }
+
+    #[test]
+    fn test_into_scheduler_unimplemented_returns_error() {
+        // These should return errors with descriptive messages
+        let unimplemented_patterns = vec![
+            CoordinationPattern::Debate,
+            CoordinationPattern::Consensus,
+            CoordinationPattern::MapReduce,
+            CoordinationPattern::Supervision,
+            CoordinationPattern::Routing,
+        ];
+
+        for pattern in unimplemented_patterns {
+            let result = pattern.into_scheduler();
+            assert!(result.is_err(), "Expected error for {} pattern", pattern);
+            
+            if let Err(err) = result {
+                let err_msg = format!("{}", err);
+                assert!(
+                    err_msg.contains("not yet implemented") || err_msg.contains("Phase 2"),
+                    "Error message should mention 'not yet implemented' or 'Phase 2', got: {}",
+                    err_msg
+                );
+            }
+        }
     }
 }
