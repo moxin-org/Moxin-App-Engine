@@ -19,6 +19,7 @@ pub mod config;
 pub mod execution;
 pub mod plugins;
 pub mod registry;
+pub mod swarm_registry;
 
 // 重新导出常用类型
 // Re-export commonly used types
@@ -29,3 +30,4 @@ pub use crate::runner::{
 pub use execution::{ExecutionEngine, ExecutionOptions, ExecutionResult, ExecutionStatus};
 pub use mofa_kernel::agent::registry::AgentFactory;
 pub use registry::{AgentRegistry, RegistryStats};
+pub use swarm_registry::SwarmAgentRegistry;

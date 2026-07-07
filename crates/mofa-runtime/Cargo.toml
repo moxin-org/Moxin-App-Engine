@@ -45,9 +45,15 @@ config.workspace = true
 regex.workspace = true
 chrono.workspace = true
 cron.workspace = true
+dashmap.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["full"] }
+
 
 [features]
 dora = ["dora-node-api", "dora-operator-api", "dora-daemon", "dora-core", "dora-message"]
