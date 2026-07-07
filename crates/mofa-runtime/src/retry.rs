@@ -4,6 +4,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use crate::agent::error::{AgentError, AgentResult};
+use rand::Rng;
 
 /// Global safety cap for linear retry delay to avoid pathological sleeps.
 const MAX_LINEAR_BACKOFF_MS: u64 = 60_000;
@@ -17,7 +18,7 @@ pub enum RetryPolicy {
     /// Delay increases linearly: `base_ms * attempt`, capped by
     /// [`MAX_LINEAR_BACKOFF_MS`].
     Linear { base_ms: u64 },
-    /// Exponential backoff capped at `max_ms`, with optional ±12.5% pseudo-jitter.
+    /// Exponential backoff capped at `max_ms`, with optional ±12.5% jitter.
     ExponentialBackoff {
         base_ms: u64,
         max_ms: u64,
@@ -49,12 +50,9 @@ impl RetryPolicy {
                 let capped = exp.min(*max_ms);
                 if *jitter {
                     let eighth = capped / 8;
-                    if attempt.is_multiple_of(2) {
-                        capped.saturating_add(eighth)
-                    } else {
-                        capped.saturating_sub(eighth)
-                    }
-                    .min(*max_ms)
+                    let lower = capped.saturating_sub(eighth);
+                    let upper = capped.saturating_add(eighth).min(*max_ms);
+                    rand::thread_rng().gen_range(lower..=upper)
                 } else {
                     capped
                 }
@@ -317,6 +315,25 @@ mod tests {
                 "attempt {attempt}: delay {delay} ms exceeded max {max_ms} ms",
             );
         }
+    }
+
+    #[test]
+    fn test_jitter_is_not_deterministic_by_attempt_parity() {
+        let p = RetryPolicy::ExponentialBackoff {
+            base_ms: 400,
+            max_ms: 10_000,
+            jitter: true,
+        };
+
+        let mut observed = std::collections::BTreeSet::new();
+        for _ in 0..32 {
+            observed.insert(p.delay_for(3).as_millis() as u64);
+        }
+
+        assert!(
+            observed.len() > 1,
+            "expected randomized jitter to produce varied delay values"
+        );
     }
 
     #[test]

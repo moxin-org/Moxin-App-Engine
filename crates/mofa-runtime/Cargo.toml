@@ -45,6 +45,7 @@ config.workspace = true
 regex.workspace = true
 chrono.workspace = true
 cron.workspace = true
+rand.workspace = true
 
 [lints]
 workspace = true
