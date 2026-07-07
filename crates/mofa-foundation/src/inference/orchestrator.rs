@@ -44,9 +44,9 @@ mod duration_secs {
 }
 
 use super::model_pool::ModelPool;
+use crate::scheduler::{AdmissionOutcome, MemoryBudget, MemoryPolicy, MemoryScheduler};
 use super::routing::{self, RoutingDecision, RoutingPolicy};
 use super::types::{InferenceRequest, InferenceResult, RequestPriority, RoutedBackend};
-use crate::scheduler::AdmissionOutcome;
 
 /// Configuration for the `InferenceOrchestrator`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -86,17 +86,17 @@ impl Default for OrchestratorConfig {
 ///
 /// Provides a single entry point (`infer`) for agents to request inference.
 /// Internally handles:
-/// - Memory-aware admission control
+/// - Memory-aware admission control via `MemoryScheduler`
 /// - Policy-driven routing (local vs cloud)
 /// - LRU model lifecycle management
+/// - Deferred queue with age-aware fairness for memory-constrained requests
 /// - Automatic cloud failover
-///
-/// Memory tracking is derived from `ModelPool` as the single source of truth.
-/// There is no separate `allocated_mb` counter — this prevents inconsistency.
 pub struct InferenceOrchestrator {
     config: OrchestratorConfig,
     model_pool: ModelPool,
     hardware: HardwareCapability,
+    /// Memory-budgeted scheduler: admission control, deferred queue, stability control.
+    scheduler: MemoryScheduler,
 }
 
 impl InferenceOrchestrator {
@@ -113,30 +113,52 @@ impl InferenceOrchestrator {
         }
 
         let model_pool = ModelPool::new(config.model_pool_capacity, config.idle_timeout);
+        let scheduler = Self::build_scheduler(&config);
 
         Self {
             config,
             model_pool,
             hardware,
+            scheduler,
         }
     }
 
     /// Create an orchestrator with explicit hardware capabilities (for testing).
     pub fn with_hardware(config: OrchestratorConfig, hardware: HardwareCapability) -> Self {
         let model_pool = ModelPool::new(config.model_pool_capacity, config.idle_timeout);
+        let scheduler = Self::build_scheduler(&config);
 
         Self {
             config,
             model_pool,
             hardware,
+            scheduler,
         }
+    }
+
+    /// Build a `MemoryScheduler` from the orchestrator configuration.
+    fn build_scheduler(config: &OrchestratorConfig) -> MemoryScheduler {
+        let policy = MemoryPolicy::new(
+            config.memory_capacity_mb as u64,
+            config.defer_threshold,
+            config.reject_threshold,
+        );
+        let budget = MemoryBudget::new(config.memory_capacity_mb as u64);
+        MemoryScheduler::new(policy, budget)
     }
 
     /// The single entry point for inference.
     ///
     /// Agents call this method with an `InferenceRequest`. The orchestrator
-    /// evaluates admission, routes to the appropriate backend, manages model
-    /// lifecycle, and returns the result.
+    /// evaluates admission via `MemoryScheduler`, routes to the appropriate
+    /// backend, manages model lifecycle, and returns the result.
+    ///
+    /// # Admission flow
+    ///
+    /// - `Accept` — routes to local or cloud based on policy; allocates scheduler budget.
+    /// - `Defer` — enqueues the request in the scheduler's deferred queue and returns
+    ///   immediately. The request will be retried when memory is freed (see `unload_model`).
+    /// - `Reject` — routes based on policy (cloud fallback or hard rejection).
     ///
     /// In this Phase 1 implementation, actual model execution is simulated.
     /// Real backend integration (MLX, OpenAI) will be wired in Phase 2.
@@ -144,12 +166,43 @@ impl InferenceOrchestrator {
         // Step 1: Evict idle models to free memory before admission check
         self.model_pool.evict_idle();
 
-        // Step 2: Evaluate admission based on current memory state
-        // Memory is always derived from ModelPool (single source of truth)
-        let admission = self.evaluate_admission(request);
+        // Step 2: Evaluate admission via MemoryScheduler.
+        // High/Critical priority requests bypass the defer band and are admitted
+        // whenever projected usage is at or below the reject threshold.
+        let decision_meta = self.scheduler.evaluate(request.required_memory_mb as u64);
+        let admission = match request.priority {
+            RequestPriority::High | RequestPriority::Critical => {
+                // Bypass defer band: treat Defer as Accept for high-priority requests
+                match decision_meta.outcome {
+                    AdmissionOutcome::Defer => AdmissionOutcome::Accept,
+                    other => other,
+                }
+            }
+            _ => decision_meta.outcome,
+        };
 
-        // Step 3: Resolve routing based on policy + admission + hardware
-        let decision = routing::resolve(
+        // Step 3: Handle Defer before routing — enqueue and return early.
+        // This replaces the old behaviour of silently sending deferred requests to cloud.
+        if admission == AdmissionOutcome::Defer {
+            self.scheduler
+                .defer(&request.model_id, request.required_memory_mb as u64);
+            return InferenceResult {
+                output: format!(
+                    "[deferred] '{}' queued — memory pressure at {:.0}% ({} MB used). \
+                     Will retry when memory is freed.",
+                    request.model_id,
+                    self.scheduler.usage_percent(),
+                    self.scheduler.used_mb(),
+                ),
+                routed_to: RoutedBackend::Rejected {
+                    reason: format!("deferred: {}", decision_meta.reason),
+                },
+                actual_precision: request.preferred_precision,
+            };
+        }
+
+        // Step 4: Resolve routing based on policy + admission + hardware
+        let routing_decision = routing::resolve(
             &self.config.routing_policy,
             request,
             admission,
@@ -157,10 +210,10 @@ impl InferenceOrchestrator {
             &self.config.cloud_provider,
         );
 
-        // Step 4: Execute based on routing decision
-        match &decision {
+        // Step 5: Execute based on routing decision
+        match &routing_decision {
             RoutingDecision::UseLocal { model_id } => {
-                // Load the model if not already loaded
+                // Load the model if not already loaded; allocate scheduler budget on new load.
                 if !self.model_pool.is_loaded(model_id) {
                     self.model_pool.load(
                         model_id,
@@ -168,6 +221,7 @@ impl InferenceOrchestrator {
                         request.preferred_precision,
                         request.priority,
                     );
+                    self.scheduler.allocate(request.required_memory_mb as u64);
                 } else {
                     self.model_pool.touch(model_id);
                 }
@@ -308,62 +362,13 @@ impl InferenceOrchestrator {
         (base_result, Box::pin(stream))
     }
 
-    /// Evaluate whether a local backend can admit this request based on
-    /// current memory usage, configured thresholds, and **request priority**.
-    ///
-    /// # Priority semantics
-    ///
-    /// - `Low` / `Normal`: standard dual-threshold hysteresis — may return
-    ///   [`AdmissionOutcome::Defer`] when usage is in the `[defer, reject)` band.
-    /// - `High`: bypasses the Deferred band — admitted directly whenever usage
-    ///   is at or below `reject_threshold` (skips the defer zone entirely).
-    /// - `Critical`: same bypass as `High`; the caller (orchestrator) is
-    ///   responsible for attempting priority-weighted eviction before a final
-    ///   rejection.
-    ///
-    /// Memory is always read from ModelPool — no separate counter to get out of sync.
-    fn evaluate_admission(&self, request: &InferenceRequest) -> AdmissionOutcome {
-        let current_mb = self.model_pool.total_memory_mb();
-        let projected_mb = current_mb + request.required_memory_mb;
-        let capacity = self.config.memory_capacity_mb;
-
-        if capacity == 0 {
-            return AdmissionOutcome::Reject;
-        }
-
-        let projected_usage = projected_mb as f64 / capacity as f64;
-
-        match request.priority {
-            // High and Critical bypass the Deferred hysteresis band:
-            // they are admitted whenever memory is below the reject ceiling.
-            RequestPriority::High | RequestPriority::Critical => {
-                if projected_usage <= self.config.reject_threshold {
-                    AdmissionOutcome::Accept
-                } else {
-                    AdmissionOutcome::Reject
-                }
-            }
-            // Low and Normal use standard dual-threshold hysteresis.
-            RequestPriority::Low | RequestPriority::Normal => {
-                if projected_usage <= self.config.defer_threshold {
-                    AdmissionOutcome::Accept
-                } else if projected_usage <= self.config.reject_threshold {
-                    // Deferred: memory is tight but may be reclaimable via eviction.
-                    // Phase 2 will add a queue-based scheduler with retry logic.
-                    AdmissionOutcome::Defer
-                } else {
-                    AdmissionOutcome::Reject
-                }
-            }
-        }
-    }
 
     /// Get the current memory usage as a fraction of total capacity (0.0–1.0).
     pub fn memory_utilization(&self) -> f64 {
         if self.config.memory_capacity_mb == 0 {
             return 1.0;
         }
-        self.model_pool.total_memory_mb() as f64 / self.config.memory_capacity_mb as f64
+        self.scheduler.usage_percent() / 100.0
     }
 
     /// Get the number of currently loaded models.
@@ -371,9 +376,9 @@ impl InferenceOrchestrator {
         self.model_pool.len()
     }
 
-    /// Get the total allocated memory (in MB), derived from ModelPool.
+    /// Get the total allocated memory (in MB), tracked by the scheduler.
     pub fn allocated_memory_mb(&self) -> usize {
-        self.model_pool.total_memory_mb()
+        self.scheduler.used_mb() as usize
     }
 
     /// Get a reference to the detected hardware capabilities.
@@ -387,8 +392,29 @@ impl InferenceOrchestrator {
     }
 
     /// Manually unload a model from the pool, freeing its memory.
+    ///
+    /// After releasing memory, the scheduler's deferred queue is checked so
+    /// that any queued request that now fits can be returned to the caller
+    /// for retry. Returns the freed memory in MB.
     pub fn unload_model(&mut self, model_id: &str) -> usize {
-        self.model_pool.unload(model_id)
+        let freed = self.model_pool.unload(model_id);
+        if freed > 0 {
+            self.scheduler.release(freed as u64);
+            // Give a waiting deferred request the chance to proceed
+            let _ = self.scheduler.try_dequeue();
+        }
+        freed
+    }
+
+    /// Return the next deferred request that fits in currently available memory,
+    /// if any. Callers can use this to retry a previously deferred inference request.
+    pub fn pop_deferred(&mut self) -> Option<crate::scheduler::DeferredRequest> {
+        self.scheduler.try_dequeue()
+    }
+
+    /// Number of requests currently waiting in the deferred queue.
+    pub fn deferred_count(&self) -> usize {
+        self.scheduler.deferred_count()
     }
 }
 
@@ -570,7 +596,7 @@ mod tests {
     // ── Priority-aware admission tests ──────────────────────────────────────────
 
     /// Normal priority: pre-fill so projected usage is in the [defer, reject) band.
-    /// Result should be cloud fallback (Deferred → cloud under LocalFirstWithCloudFallback).
+    /// The request is now enqueued in the deferred queue instead of going to cloud.
     #[test]
     fn test_normal_priority_deferred_in_defer_band() {
         let mut config = test_config();
@@ -585,17 +611,16 @@ mod tests {
         orch.infer(&fill);
         assert_eq!(orch.allocated_memory_mb(), 6_500);
 
-        // Now project 6500+1000 = 7500 / 10000 = 75% → in [70%, 90%) → Deferred → cloud.
+        // Now project 6500+1000 = 7500 / 10000 = 75% → in [70%, 90%) → Defer.
+        // Under the new behaviour the request is queued, not sent to cloud.
         let req = InferenceRequest::new("extra-model", "batch", 1_000)
             .with_priority(RequestPriority::Normal);
         let result = orch.infer(&req);
-        assert_eq!(
-            result.routed_to,
-            RoutedBackend::Cloud {
-                provider: "openai".into()
-            },
-            "Normal priority in defer band should fall back to cloud"
+        assert!(
+            matches!(result.routed_to, RoutedBackend::Rejected { ref reason } if reason.contains("deferred")),
+            "Normal priority in defer band should be enqueued, not cloud-routed"
         );
+        assert_eq!(orch.deferred_count(), 1, "Request should be in the deferred queue");
     }
 
     /// High priority: same memory conditions as above, but bypass the defer band.
@@ -681,7 +706,7 @@ mod tests {
         );
     }
 
-    /// Low priority in the defer band behaves identically to Normal (falls back to cloud).
+    /// Low priority in the defer band: enqueued like Normal (not cloud-routed).
     #[test]
     fn test_low_priority_deferred_same_as_normal() {
         let mut config = test_config();
@@ -696,12 +721,96 @@ mod tests {
         let req = InferenceRequest::new("batch-model", "batch job", 1_000)
             .with_priority(RequestPriority::Low);
         let result = orch.infer(&req);
-        assert_eq!(
-            result.routed_to,
-            RoutedBackend::Cloud {
-                provider: "openai".into()
-            },
-            "Low priority in defer band should fall back to cloud"
+        assert!(
+            matches!(result.routed_to, RoutedBackend::Rejected { ref reason } if reason.contains("deferred")),
+            "Low priority in defer band should be enqueued, not cloud-routed"
         );
+        assert_eq!(orch.deferred_count(), 1);
+    }
+
+    // ── MemoryScheduler integration tests ───────────────────────────────────────
+
+    /// Verify that a deferred request increments the scheduler's deferred queue.
+    #[test]
+    fn test_defer_enqueues_to_scheduler() {
+        let mut config = test_config();
+        config.memory_capacity_mb = 10_000;
+        config.defer_threshold = 0.70;
+        config.reject_threshold = 0.90;
+        let mut orch = InferenceOrchestrator::with_hardware(config, test_hardware());
+
+        // Fill to 65% — next request will land in the defer band.
+        orch.infer(&InferenceRequest::new("filler", "fill", 6_500));
+        assert_eq!(orch.deferred_count(), 0);
+
+        // 6500+1000 = 75% > 70% defer threshold → Defer
+        orch.infer(
+            &InferenceRequest::new("pending", "wait", 1_000).with_priority(RequestPriority::Low),
+        );
+        assert_eq!(orch.deferred_count(), 1, "One request should be in the deferred queue");
+
+        // 6500+1500 = 80% > 70% → also Defer (scheduler budget still 6500 since deferred never allocates)
+        orch.infer(
+            &InferenceRequest::new("pending2", "wait2", 1_500)
+                .with_priority(RequestPriority::Normal),
+        );
+        assert_eq!(orch.deferred_count(), 2, "Two requests should now be in the deferred queue");
+    }
+
+    /// Verify that unloading a model releases scheduler budget.
+    #[test]
+    fn test_release_after_unload_updates_scheduler() {
+        let mut orch = InferenceOrchestrator::with_hardware(test_config(), test_hardware());
+
+        let req = InferenceRequest::new("model-a", "test", 8_000);
+        orch.infer(&req);
+        assert_eq!(orch.allocated_memory_mb(), 8_000);
+
+        let freed = orch.unload_model("model-a");
+        assert_eq!(freed, 8_000);
+        assert_eq!(
+            orch.allocated_memory_mb(),
+            0,
+            "Scheduler budget should be zero after unload"
+        );
+    }
+
+    /// Full deferred-queue round-trip: load model A (fills memory), defer model B,
+    /// unload A — the internal try_dequeue() fires and clears model B from the queue.
+    #[test]
+    fn test_dequeue_after_release() {
+        let mut config = test_config();
+        config.memory_capacity_mb = 10_000;
+        config.defer_threshold = 0.70;
+        config.reject_threshold = 0.90;
+        let mut orch = InferenceOrchestrator::with_hardware(config, test_hardware());
+
+        // Load model-a: 6500 / 10000 = 65% → Accepted
+        orch.infer(&InferenceRequest::new("model-a", "run", 6_500));
+        assert_eq!(orch.allocated_memory_mb(), 6_500);
+
+        // model-b: (6500 + 1000) / 10000 = 75% → Defer → enqueued
+        let defer_result = orch.infer(
+            &InferenceRequest::new("model-b", "pending", 1_000)
+                .with_priority(RequestPriority::Normal),
+        );
+        assert!(
+            matches!(defer_result.routed_to, RoutedBackend::Rejected { ref reason } if reason.contains("deferred")),
+            "model-b should be deferred"
+        );
+        assert_eq!(orch.deferred_count(), 1, "One request in the deferred queue");
+
+        // Unload model-a: frees 6500 MB → scheduler.release() + internal try_dequeue()
+        // try_dequeue() removes model-b (1000 MB) from the queue since it now fits.
+        orch.unload_model("model-a");
+        assert_eq!(orch.allocated_memory_mb(), 0, "Scheduler budget should be 0 after unload");
+        assert_eq!(
+            orch.deferred_count(),
+            0,
+            "try_dequeue() inside unload_model should have consumed the deferred request"
+        );
+
+        // Queue is already empty — pop_deferred returns None
+        assert!(orch.pop_deferred().is_none(), "Queue should be empty after automatic dequeue");
     }
 }
