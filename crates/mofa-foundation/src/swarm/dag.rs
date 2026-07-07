@@ -1110,3 +1110,226 @@ mod tests {
         assert_eq!(dag.critical_path_duration_secs().unwrap(), 0);
     }
 }
+
+// ── Property-based tests ──────────────────────────────────────────────────────
+//
+// These tests use proptest to generate tens of thousands of random DAG
+// topologies and verify structural invariants that hand-written unit tests
+// cannot exhaustively cover.
+//
+// The core risk this guards against: an LLM decomposes a goal into a
+// SubtaskDAG but its output is non-deterministic and may accidentally
+// encode cyclic dependencies (e.g. task A requires B, B requires A).
+// A cycle in the DAG causes the scheduler to spin forever -- a silent
+// deadlock with no error message.  These properties confirm the guard
+// holds across arbitrary random graphs.
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashMap;
+
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    /// Build a DAG with `task_count` nodes, then attempt to insert every
+    /// (from, to) pair from `edges`.  Cycle-creating edges are silently
+    /// discarded by `add_dependency`; valid edges are kept.
+    fn build_random_dag(
+        task_count: usize,
+        edges: &[(usize, usize)],
+    ) -> (SubtaskDAG, Vec<NodeIndex>) {
+        let mut dag = SubtaskDAG::new("pbt");
+        let indices: Vec<NodeIndex> = (0..task_count)
+            .map(|i| dag.add_task(SwarmSubtask::new(format!("t{i}"), format!("task {i}"))))
+            .collect();
+
+        for &(f, t) in edges {
+            let from = indices[f % task_count];
+            let to = indices[t % task_count];
+            if from != to {
+                let _ = dag.add_dependency(from, to);
+            }
+        }
+
+        (dag, indices)
+    }
+
+    // ── properties ───────────────────────────────────────────────────────
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        /// After any sequence of add_dependency calls the graph must be acyclic.
+        ///
+        /// `topological_order()` uses petgraph's Kahn algorithm and returns
+        /// `Err` if and only if the graph contains a cycle.  A successful
+        /// return here proves no cycle was leaked into the graph regardless
+        /// of the random edge sequence attempted.
+        #[test]
+        fn dag_is_always_acyclic_after_random_insertions(
+            task_count in 2usize..=15usize,
+            edges in proptest::collection::vec(
+                (0usize..15usize, 0usize..15usize),
+                0usize..30usize,
+            ),
+        ) {
+            let (dag, _) = build_random_dag(task_count, &edges);
+            prop_assert!(
+                dag.topological_order().is_ok(),
+                "cycle detected after {} attempted insertions on {} nodes",
+                edges.len(),
+                task_count,
+            );
+        }
+
+        /// When add_dependency returns Err (cycle attempt), the edge must not
+        /// be retained in the graph.
+        ///
+        /// Strategy: build a valid DAG, record its edge count, then attempt a
+        /// known back-edge (last node in topological order -> first node).
+        /// If the call returns Err the edge count must be unchanged.
+        #[test]
+        fn rejected_cycle_edge_does_not_increase_edge_count(
+            task_count in 2usize..=10usize,
+            edges in proptest::collection::vec(
+                (0usize..10usize, 0usize..10usize),
+                0usize..15usize,
+            ),
+        ) {
+            let (mut dag, _) = build_random_dag(task_count, &edges);
+
+            if let Ok(order) = dag.topological_order() {
+                if order.len() >= 2 {
+                    let tail = *order.last().unwrap();
+                    let head = order[0];
+                    let count_before = dag.graph.edge_count();
+                    let result = dag.add_dependency(tail, head);
+                    if result.is_err() {
+                        prop_assert_eq!(
+                            dag.graph.edge_count(),
+                            count_before,
+                            "edge count changed after a rejected (cyclic) add_dependency"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// Every task returned by ready_tasks() must have all hard
+        /// (Sequential / DataFlow) predecessors in a terminal state.
+        ///
+        /// This is the scheduler safety invariant: if a ready task has an
+        /// unsatisfied hard dependency the scheduler would start it too early,
+        /// producing incorrect results or data races.
+        #[test]
+        fn ready_tasks_have_all_hard_dependencies_satisfied(
+            task_count in 2usize..=12usize,
+            edges in proptest::collection::vec(
+                (0usize..12usize, 0usize..12usize),
+                0usize..20usize,
+            ),
+            complete_count in 0usize..=12usize,
+        ) {
+            let (mut dag, indices) = build_random_dag(task_count, &edges);
+
+            // Simulate partial execution: mark the first N ready tasks complete
+            // in topological order so the state is consistent.
+            let to_complete = complete_count.min(task_count);
+            if let Ok(order) = dag.topological_order() {
+                for &idx in order.iter().take(to_complete) {
+                    // only mark if actually ready (all deps satisfied)
+                    if dag.ready_tasks().contains(&idx) {
+                        dag.mark_complete(idx);
+                    }
+                }
+            }
+            let _ = indices; // suppress unused warning
+
+            for &ready_idx in &dag.ready_tasks() {
+                for edge in dag.graph.edges_directed(ready_idx, Direction::Incoming) {
+                    let dep = &dag.graph[edge.source()];
+                    match edge.weight().kind {
+                        DependencyKind::Sequential | DependencyKind::DataFlow => {
+                            prop_assert!(
+                                matches!(
+                                    dep.status,
+                                    SubtaskStatus::Completed
+                                        | SubtaskStatus::Skipped
+                                        | SubtaskStatus::Failed(_)
+                                ),
+                                "ready task has an unsatisfied hard dependency (status: {:?})",
+                                dep.status
+                            );
+                        }
+                        DependencyKind::Soft => {}
+                    }
+                }
+            }
+        }
+
+        /// For every edge (u -> v) in the graph, u must appear before v in
+        /// the topological order returned by topological_order().
+        ///
+        /// Violated topological ordering means the scheduler would hand a
+        /// task to an agent before its dependency has produced output.
+        #[test]
+        fn topological_order_respects_every_dependency_edge(
+            task_count in 2usize..=15usize,
+            edges in proptest::collection::vec(
+                (0usize..15usize, 0usize..15usize),
+                0usize..25usize,
+            ),
+        ) {
+            let (dag, _) = build_random_dag(task_count, &edges);
+
+            if let Ok(order) = dag.topological_order() {
+                let position: HashMap<NodeIndex, usize> =
+                    order.iter().enumerate().map(|(pos, &idx)| (idx, pos)).collect();
+
+                for edge in dag.graph.edge_indices() {
+                    let (u, v) = dag.graph.edge_endpoints(edge).unwrap();
+                    prop_assert!(
+                        position[&u] < position[&v],
+                        "topological order violated: node {:?} (pos {}) must precede {:?} (pos {})",
+                        u,
+                        position[&u],
+                        v,
+                        position[&v],
+                    );
+                }
+            }
+        }
+
+        /// progress() must be non-decreasing as tasks are marked terminal.
+        ///
+        /// A regression here would mean the UI / monitoring layer could show
+        /// execution going backwards, breaking operator trust in the dashboard.
+        #[test]
+        fn progress_never_decreases_as_tasks_complete(
+            task_count in 1usize..=10usize,
+            edges in proptest::collection::vec(
+                (0usize..10usize, 0usize..10usize),
+                0usize..15usize,
+            ),
+        ) {
+            let (mut dag, _) = build_random_dag(task_count, &edges);
+            let mut last = dag.progress();
+
+            if let Ok(order) = dag.topological_order() {
+                for idx in order {
+                    dag.mark_complete(idx);
+                    let current = dag.progress();
+                    prop_assert!(
+                        current >= last,
+                        "progress decreased from {last} to {current} after mark_complete"
+                    );
+                    last = current;
+                }
+                prop_assert!(
+                    (last - 1.0_f64).abs() < f64::EPSILON,
+                    "progress must be 1.0 after all tasks complete, got {last}"
+                );
+            }
+        }
+    }
+}

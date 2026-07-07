@@ -178,6 +178,8 @@ workspace = true
 num_enum_derive = "0.7"
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+# property-based testing for DAG invariants
+proptest = "1"
 
 [[bench]]
 name = "context_compression"
