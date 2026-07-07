@@ -59,6 +59,54 @@ impl MockAgentBus {
         self.inner.send_message(sender_id, mode, &message).await
     }
 
+    /// All captured messages sent by the given sender.
+    pub async fn messages_from(
+        &self,
+        sender_id: &str,
+    ) -> Vec<(String, CommunicationMode, AgentMessage)> {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .filter(|(sid, _, _)| sid == sender_id)
+            .cloned()
+            .collect()
+    }
+
+    /// All captured messages addressed to the given recipient.
+    pub async fn messages_to(
+        &self,
+        recipient_id: &str,
+    ) -> Vec<(String, CommunicationMode, AgentMessage)> {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .filter(|(_, mode, _)| match mode {
+                CommunicationMode::PointToPoint(target) => target == recipient_id,
+                _ => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// All captured messages matching a predicate.
+    pub async fn messages_matching<F>(
+        &self,
+        predicate: F,
+    ) -> Vec<(String, CommunicationMode, AgentMessage)>
+    where
+        F: Fn(&str, &CommunicationMode, &AgentMessage) -> bool,
+    {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .filter(|(s, m, msg)| predicate(s, m, msg))
+            .cloned()
+            .collect()
+    }
+
     /// Number of messages captured so far.
     pub async fn message_count(&self) -> usize {
         self.captured_messages.read().await.len()
