@@ -89,12 +89,14 @@ impl CapabilityIndex {
     /// 移除索引
     /// Remove Index
     fn unindex(&mut self, agent_id: &str) {
-        for ids in self.by_tag.values_mut() {
+        self.by_tag.retain(|_, ids| {
             ids.retain(|id| id != agent_id);
-        }
-        for ids in self.by_strategy.values_mut() {
+            !ids.is_empty()
+        });
+        self.by_strategy.retain(|_, ids| {
             ids.retain(|id| id != agent_id);
-        }
+            !ids.is_empty()
+        });
     }
 
     /// 按标签查找
