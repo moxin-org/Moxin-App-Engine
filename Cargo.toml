@@ -86,6 +86,9 @@ lazy_static = "1.4"
 # Actor framework for ReAct agents
 ractor = "0"
 
+# TOML deserialization (also used transitively by config)
+toml = "0.8"
+
 # Configuration file support (multi-format)
 config = { version = "0.14", features = [
     "toml",

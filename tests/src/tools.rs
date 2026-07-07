@@ -20,6 +20,7 @@ pub struct MockTool {
     category: ToolCategory,
     pub stubbed_result: Arc<RwLock<ToolResult>>,
     pub call_history: Arc<RwLock<Vec<ToolInput>>>,
+    pub result_history: Arc<RwLock<Vec<ToolResult>>>,
     failure_queue: Arc<RwLock<VecDeque<String>>>,
     failure_patterns: Arc<RwLock<Vec<(Value, String)>>>,
     result_sequence: Arc<RwLock<VecDeque<ToolResult>>>,
@@ -37,6 +38,7 @@ impl MockTool {
                 "Mock execution default",
             ))),
             call_history: Arc::new(RwLock::new(Vec::new())),
+            result_history: Arc::new(RwLock::new(Vec::new())),
             failure_queue: Arc::new(RwLock::new(VecDeque::new())),
             failure_patterns: Arc::new(RwLock::new(Vec::new())),
             result_sequence: Arc::new(RwLock::new(VecDeque::new())),
@@ -56,6 +58,16 @@ impl MockTool {
     /// Number of times this tool has been executed.
     pub async fn call_count(&self) -> usize {
         self.call_history.read().await.len()
+    }
+
+    /// Retrieve a clone of the full result history.
+    pub async fn results(&self) -> Vec<ToolResult> {
+        self.result_history.read().await.clone()
+    }
+
+    /// Returns the most recent result, or `None` if never executed.
+    pub async fn last_result(&self) -> Option<ToolResult> {
+        self.result_history.read().await.last().cloned()
     }
 
     /// Queue failures for the next N calls.
@@ -110,12 +122,18 @@ impl SimpleTool for MockTool {
 
     async fn execute(&self, input: ToolInput) -> ToolResult {
         self.call_history.write().await.push(input.clone());
+        let start = std::time::Instant::now();
 
         // 1. Drain failure queue
         {
             let mut queue = self.failure_queue.write().await;
             if let Some(err) = queue.pop_front() {
-                return ToolResult::failure(err);
+                let mut result = ToolResult::failure(err);
+                result
+                    .metadata
+                    .insert("duration_ms".to_string(), start.elapsed().as_millis().to_string());
+                self.result_history.write().await.push(result.clone());
+                return result;
             }
         }
 
@@ -124,7 +142,12 @@ impl SimpleTool for MockTool {
             let patterns = self.failure_patterns.read().await;
             for (pattern, err) in patterns.iter() {
                 if input.arguments == *pattern {
-                    return ToolResult::failure(err);
+                    let mut result = ToolResult::failure(err);
+                    result
+                        .metadata
+                        .insert("duration_ms".to_string(), start.elapsed().as_millis().to_string());
+                    self.result_history.write().await.push(result.clone());
+                    return result;
                 }
             }
         }
@@ -133,11 +156,21 @@ impl SimpleTool for MockTool {
         {
             let mut seq = self.result_sequence.write().await;
             if let Some(result) = seq.pop_front() {
+                let mut result = result;
+                result
+                    .metadata
+                    .insert("duration_ms".to_string(), start.elapsed().as_millis().to_string());
+                self.result_history.write().await.push(result.clone());
                 return result;
             }
         }
 
-        self.stubbed_result.read().await.clone()
+        let mut result = self.stubbed_result.read().await.clone();
+        result
+            .metadata
+            .insert("duration_ms".to_string(), start.elapsed().as_millis().to_string());
+        self.result_history.write().await.push(result.clone());
+        result
     }
 
     fn category(&self) -> ToolCategory {

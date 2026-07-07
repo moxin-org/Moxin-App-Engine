@@ -1,0 +1,9 @@
+[package]
+name = "agent_runner_basic"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mofa-testing = { path = "../../tests" }
+tokio.workspace = true
