@@ -19,6 +19,7 @@ mod dataflow;
 mod error;
 mod node;
 mod operator;
+mod retry;
 pub mod runtime;
 
 pub use channel::{ChannelConfig, ChannelManager, DoraChannel, MessageEnvelope};
@@ -29,6 +30,7 @@ pub use operator::{
     DoraPluginOperator, MoFAOperator, OperatorChain, OperatorConfig, OperatorInput, OperatorOutput,
     PluginOperatorAdapter,
 };
+pub use retry::{RetryPolicy, retry_with_policy};
 
 // 导出运行时支持（真实 dora API）
 // Export runtime support (Actual dora APIs)

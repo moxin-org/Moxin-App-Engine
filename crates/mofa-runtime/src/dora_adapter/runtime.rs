@@ -223,7 +223,7 @@ pub struct DistributedConfig {
 impl Default for DistributedConfig {
     fn default() -> Self {
         Self {
-            coordinator_addr: "127.0.0.1:5000".parse().unwrap(),
+            coordinator_addr: SocketAddr::from(([127, 0, 0, 1], 5000)),
             machine_id: None,
             local_listen_port: 5001,
         }

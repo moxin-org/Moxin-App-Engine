@@ -14,13 +14,15 @@
 #[cfg(feature = "dora")]
 use crate::dora_adapter::{
     ChannelConfig, DataflowConfig, DoraAgentNode, DoraChannel, DoraDataflow, DoraError,
-    DoraNodeConfig, DoraResult, MessageEnvelope,
+    DoraNodeConfig, DoraResult, MessageEnvelope, RetryPolicy,
 };
 use crate::interrupt::AgentInterrupt;
 use crate::{AgentConfig, AgentMetadata, MoFAAgent};
 #[cfg(feature = "dora")]
 use ::tracing::{debug, info};
 use mofa_kernel::AgentPlugin;
+#[cfg(feature = "dora")]
+use mofa_kernel::core::MofaError;
 use mofa_kernel::agent::types::error::{GlobalError, GlobalResult};
 use mofa_kernel::message::AgentEvent;
 #[cfg(feature = "dora")]
@@ -404,10 +406,7 @@ impl<A: MoFAAgent> AgentRuntime<A> {
                         _ => AgentInput::text(format!("{:?}", event)),
                     };
 
-                    self.agent
-                        .execute(input, &self.context)
-                        .await
-                        .map_err(|e| DoraError::Internal(e.to_string()))?;
+                    self.execute_with_retry(input).await?;
                 }
                 None => {
                     // 无事件，继续等待
@@ -425,6 +424,69 @@ impl<A: MoFAAgent> AgentRuntime<A> {
             .map_err(|e| DoraError::Internal(e.to_string()))?;
 
         Ok(())
+    }
+
+    fn retry_policy(&self) -> RetryPolicy {
+        let max_attempts = self
+            .config
+            .node_config
+            .get("retry.max_attempts")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(3);
+
+        let base_delay_ms = self
+            .config
+            .node_config
+            .get("retry.base_delay_ms")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(200);
+
+        let max_delay_ms = self
+            .config
+            .node_config
+            .get("retry.max_delay_ms")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5_000);
+
+        let jitter = self
+            .config
+            .node_config
+            .get("retry.jitter")
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(false);
+
+        RetryPolicy {
+            max_attempts,
+            base_delay_ms,
+            max_delay_ms,
+            jitter,
+        }
+    }
+
+    async fn execute_with_retry(
+        &mut self,
+        input: mofa_kernel::agent::types::AgentInput,
+    ) -> DoraResult<()> {
+        let policy = self.retry_policy();
+        let max_attempts = policy.max_attempts.max(1);
+        let mut attempt: u32 = 0;
+
+        loop {
+            match self.agent.execute(input.clone(), &self.context).await {
+                Ok(_) => return Ok(()),
+                Err(agent_error) => {
+                    let mofa_error = MofaError::from(agent_error);
+                    let next_attempt = attempt.saturating_add(1);
+                    let can_retry = mofa_error.is_retryable() && next_attempt < max_attempts;
+                    if !can_retry {
+                        return Err(DoraError::from(mofa_error));
+                    }
+
+                    tokio::time::sleep(policy.delay_for(attempt)).await;
+                    attempt = next_attempt;
+                }
+            }
+        }
     }
 
     /// 停止运行时

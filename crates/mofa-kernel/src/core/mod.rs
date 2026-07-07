@@ -4,9 +4,11 @@
 //! 此模块包含 Agent 相关的核心配置和元数据类型。
 //! This module contains core configuration and metadata types related to the Agent.
 pub mod interrupt;
+pub mod error;
 pub use crate::agent::{
     AgentContext, AgentEvent, AgentInput, AgentOutput, AgentState, types::InterruptResult,
 };
+pub use error::MofaError;
 
 /// AgentConfig - Agent 配置
 /// AgentConfig - Agent Configuration

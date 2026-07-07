@@ -1,12 +1,16 @@
 //! Error type definitions for the dora-rs adapter layer.
 
 use error_stack::Report;
+use mofa_kernel::core::MofaError;
 use thiserror::Error;
 
 /// Error types for the dora-rs adapter layer.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum DoraError {
+    #[error("MoFA error: {0}")]
+    Mofa(#[from] MofaError),
+
     #[error("Node initialization failed: {0}")]
     NodeInitError(String),
 
