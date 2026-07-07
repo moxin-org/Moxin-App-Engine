@@ -23,12 +23,27 @@ impl AgentInterrupt {
         }
     }
 
-    // 触发中断
-    // Trigger interrupt
+    // 触发中断 — 唤醒所有等待的任务
+    // Trigger interrupt — wake ALL waiting tasks
     pub fn trigger(&self) {
         self.is_interrupted
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
+    }
+
+    // 异步等待中断信号
+    // Asynchronously wait for an interrupt signal.
+    // Uses a loop to handle the race where a task calls wait() after
+    // trigger()/notify_waiters() has already drained.
+    pub async fn wait(&self) {
+        loop {
+            if self.is_interrupted
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+            self.notify.notified().await;
+        }
     }
 
     // 检查是否中断
