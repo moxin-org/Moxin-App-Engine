@@ -329,6 +329,7 @@ For more information on security best practices, see our [Security Guide](docs/s
 - **Questions, ideas, and general discussion** → [GitHub Discussions](https://github.com/mofa-org/mofa/discussions)
 - **Security vulnerabilities** → Do **not** open a public issue. Email the maintainers directly (see [SECURITY.md](SECURITY.md)).
 - **Community chat** → [Discord](https://discord.com/invite/hKJZzDMMm9)
+  - If the invite appears expired, ask in Discussions for the latest invite link.
 
 ---
 

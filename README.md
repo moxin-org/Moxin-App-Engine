@@ -460,6 +460,7 @@ MoFA is participating in **Google Summer of Code 2026** as a first-time organiza
 
 - GitHub Discussions: [https://github.com/mofa-org/mofa/discussions](https://github.com/mofa-org/mofa/discussions)
 - Discord: [https://discord.com/invite/hKJZzDMMm9](https://discord.com/invite/hKJZzDMMm9)
+- If the Discord invite appears expired, open a thread in Discussions and maintainers will share a refreshed invite.
 
 ## Star History
 

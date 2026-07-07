@@ -263,7 +263,7 @@ For a full list see [examples/README.md](../examples/README.md).
 | Write a Rhai runtime plugin | `examples/rhai_scripting/` |
 | Build a WASM plugin | `examples/wasm_plugin/` |
 | Contribute a fix or feature | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| Ask a question | [GitHub Discussions](https://github.com/mofa-org/mofa/discussions) · [Discord](https://discord.com/invite/hKJZzDMMm9) |
+| Ask a question | [GitHub Discussions](https://github.com/mofa-org/mofa/discussions) · [Discord](https://discord.com/invite/hKJZzDMMm9) (if invite fails, ask in Discussions) |
 
 ---
 

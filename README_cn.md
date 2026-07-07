@@ -378,8 +378,9 @@ export MOFA_BIN=/absolute/path/to/mofa
 
 ## 社区
 
-- GitHub Issues: [https://github.com/mofa-org/mofa/discussions](https://github.com/mofa-org/mofa/discussions)
+- GitHub Discussions: [https://github.com/mofa-org/mofa/discussions](https://github.com/mofa-org/mofa/discussions)
 - Discord: [https://discord.com/invite/hKJZzDMMm9](https://discord.com/invite/hKJZzDMMm9)
+- 若 Discord 邀请链接失效，请在 Discussions 发帖，维护者会提供最新邀请链接。
 
 ## 星标历史
 
