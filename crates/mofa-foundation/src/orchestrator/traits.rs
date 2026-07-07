@@ -5,11 +5,14 @@
 //! - `ModelOrchestrator`: Orchestrates multiple models with lifecycle, scheduling, and pipeline routing
 
 use async_trait::async_trait;
+use futures::StreamExt;
+use mofa_kernel::llm::BoxTokenStream;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::time::{sleep, Duration};
 
 // ============================================================================
 // Model Type — Task-based routing
@@ -235,6 +238,27 @@ pub trait ModelProvider: Send + Sync {
 
     /// Run inference with the given input string, return response string
     async fn infer(&self, input: &str) -> OrchestratorResult<String>;
+
+    /// Run streaming inference with the given input string, return token stream
+    ///
+    /// Default implementation calls `infer()` and splits the result into tokens.
+    /// Providers should override this for true streaming support.
+    async fn infer_stream(&self, input: &str) -> OrchestratorResult<BoxTokenStream> {
+        // Default: call infer() and split into word-by-word stream
+        let output = self.infer(input).await?;
+        // Collect owned strings to avoid lifetime issues
+        let tokens: Vec<String> = output.split_whitespace().map(String::from).collect();
+        use mofa_kernel::llm::{StreamChunk, FinishReason, StreamError};
+        let stream = futures::stream::iter(tokens)
+            .then(|token| async move {
+                sleep(Duration::from_millis(30)).await;
+                Ok::<_, StreamError>(StreamChunk::text(token))
+            })
+            .chain(futures::stream::once(async move {
+                Ok(StreamChunk::done(FinishReason::Stop))
+            }));
+        Ok(Box::pin(stream))
+    }
 
     /// Current memory usage in bytes
     fn memory_usage_bytes(&self) -> u64;

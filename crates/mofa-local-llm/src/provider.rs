@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use mofa_foundation::orchestrator::traits::{
     ModelProvider, ModelProviderConfig, ModelType, OrchestratorError, OrchestratorResult,
 };
+use mofa_kernel::llm::BoxTokenStream;
 use serde_json::Value;
 use std::collections::HashMap;
 use sysinfo::{MemoryRefreshKind, RefreshKind, System};
@@ -216,6 +217,34 @@ impl ModelProvider for LinuxLocalProvider {
         }
     }
 
+    async fn infer_stream(&self, input: &str) -> OrchestratorResult<BoxTokenStream> {
+        use futures::StreamExt;
+        use mofa_kernel::llm::{StreamChunk, FinishReason, StreamError};
+
+        if !self.loaded {
+            return Err(OrchestratorError::InferenceFailed(
+                "model is not loaded".into(),
+            ));
+        }
+
+        // Get the full inference result first
+        let output = self.infer(input).await?;
+        
+        // Simulate token-by-token streaming
+        let tokens: Vec<String> = output.split_whitespace().map(String::from).collect();
+        
+        let stream = futures::stream::iter(tokens)
+            .then(|token| async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+                Ok::<_, StreamError>(StreamChunk::text(token))
+            })
+            .chain(futures::stream::once(async move {
+                Ok(StreamChunk::done(FinishReason::Stop))
+            }));
+        
+        Ok(Box::pin(stream))
+    }
+
     fn memory_usage_bytes(&self) -> u64 {
         self.memory_usage
     }
@@ -292,15 +321,20 @@ impl LinuxLocalProvider {
         self.run_inference_stub("cpu", input)
     }
 
-    /// Stub that returns a structured response describing what would be run.
+    /// Stub that returns a realistic inference response.
     /// Replace this with real backend calls when integrating with candle / llama.cpp.
     fn run_inference_stub(&self, backend: &str, input: &str) -> OrchestratorResult<String> {
-        Ok(format!(
-            "[{backend} backend] model={} input_tokens={} max_tokens={}",
+        // Generate a response that includes both the backend (for test compatibility)
+        // and the inference result format (for demo streaming)
+        let input_tokens = input.split_whitespace().count();
+        let response = format!(
+            "[{} backend] [local:{}] Inference result for: {} input_tokens={}",
+            backend,
             self.config.model_name,
-            input.split_whitespace().count(),
-            self.config.max_tokens,
-        ))
+            input,
+            input_tokens
+        );
+        Ok(response)
     }
 }
 

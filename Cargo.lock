@@ -5967,7 +5967,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures",
  "mofa-foundation",
+ "mofa-kernel",
  "serde",
  "serde_json",
  "sysinfo 0.31.4",
