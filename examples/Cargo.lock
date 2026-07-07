@@ -6196,6 +6196,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rag_agent_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mofa-foundation",
+ "mofa-kernel",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "rag_indexing_demo"
 version = "0.1.0"
 dependencies = [

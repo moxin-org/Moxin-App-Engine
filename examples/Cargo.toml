@@ -60,6 +60,7 @@ members = [
     "capability_discovery",
     "rag_retrieval_demo",
     "rag_indexing_demo",
+    "rag_agent_demo",
     "adversarial_testing_demo",
     "production_observability",
     "llm_fallback_chain",

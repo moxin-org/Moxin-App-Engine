@@ -1,0 +1,17 @@
+[package]
+name = "rag_agent_demo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mofa-foundation = { path = "../../crates/mofa-foundation" }
+mofa-kernel = { path = "../../crates/mofa-kernel" }
+
+tokio.workspace = true
+async-trait = "0.1"
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

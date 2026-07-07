@@ -8,6 +8,7 @@
 
 pub mod adapters;
 pub mod builtin;
+pub mod rag;
 pub mod registry;
 
 /// MCP (Model Context Protocol) 客户端实现
@@ -23,4 +24,5 @@ pub mod mcp;
 
 pub use adapters::{BuiltinTools, ClosureTool, FunctionTool};
 pub use builtin::{DateTimeTool, FileReadTool, FileWriteTool, HttpTool, JsonParseTool, ShellTool};
+pub use rag::RagTool;
 pub use registry::{ToolRegistry, ToolSearcher};
