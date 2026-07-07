@@ -1,0 +1,4 @@
+[plugin]
+id      = "mofa-fm"
+version = "0.3.0"
+entry   = "libmofa_fm.so"

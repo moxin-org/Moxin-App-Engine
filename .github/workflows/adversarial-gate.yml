@@ -21,7 +21,7 @@ jobs:
       PASS_RATE_MIN: "1.0"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6 
 
       - name: Install system dependencies
         run: |
@@ -29,10 +29,10 @@ jobs:
           sudo apt-get install -y libasound2-dev
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203  
 
       - name: Cache dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@v5  
         with:
           path: |
             ~/.cargo/registry
@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload SecurityReport Artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4
         with:
           name: SecurityReport
           path: |
