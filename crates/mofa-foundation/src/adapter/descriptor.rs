@@ -406,20 +406,33 @@ impl AdapterDescriptorBuilder {
         self
     }
 
-    pub fn build(self) -> AdapterDescriptor {
+    /// Build the AdapterDescriptor, validating all required fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdapterError::InvalidConfig`] if:
+    /// - `id` is empty
+    /// - `name` is empty
+    /// - No supported modalities are set
+    /// - No supported formats are set
+    pub fn build(self) -> Result<AdapterDescriptor, AdapterError> {
         if self.descriptor.id.is_empty() {
-            panic!("AdapterDescriptor must have an id");
+            return Err(AdapterError::InvalidConfig("AdapterDescriptor must have an id".to_string()));
         }
         if self.descriptor.name.is_empty() {
-            panic!("AdapterDescriptor must have a name");
+            return Err(AdapterError::InvalidConfig("AdapterDescriptor must have a name".to_string()));
         }
         if self.descriptor.supported_modalities.is_empty() {
-            panic!("AdapterDescriptor must have at least one supported modality");
+            return Err(AdapterError::InvalidConfig(
+                "AdapterDescriptor must have at least one supported modality".to_string(),
+            ));
         }
         if self.descriptor.supported_formats.is_empty() {
-            panic!("AdapterDescriptor must have at least one supported format");
+            return Err(AdapterError::InvalidConfig(
+                "AdapterDescriptor must have at least one supported format".to_string(),
+            ));
         }
-        self.descriptor
+        Ok(self.descriptor)
     }
 }
 
@@ -437,7 +450,8 @@ mod tests {
             .supported_format(ModelFormat::Safetensors)
             .supported_quantization("q4_k")
             .priority(100)
-            .build();
+            .build()
+            .expect("builder should succeed with valid input");
 
         assert_eq!(descriptor.id, "test-adapter");
         assert_eq!(descriptor.name, "Test Adapter");
@@ -445,6 +459,62 @@ mod tests {
         assert!(descriptor.supports_format(&ModelFormat::Safetensors));
         assert!(descriptor.supports_quantization("q4_k"));
         assert_eq!(descriptor.priority, 100);
+    }
+
+    #[test]
+    fn test_adapter_descriptor_builder_missing_id() {
+        let result = AdapterDescriptor::builder()
+            .name("Test Adapter")
+            .supported_modality(Modality::LLM)
+            .supported_format(ModelFormat::Safetensors)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::InvalidConfig(msg)) if msg.contains("id")
+        ));
+    }
+
+    #[test]
+    fn test_adapter_descriptor_builder_missing_name() {
+        let result = AdapterDescriptor::builder()
+            .id("test-adapter")
+            .supported_modality(Modality::LLM)
+            .supported_format(ModelFormat::Safetensors)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::InvalidConfig(msg)) if msg.contains("name")
+        ));
+    }
+
+    #[test]
+    fn test_adapter_descriptor_builder_missing_modalities() {
+        let result = AdapterDescriptor::builder()
+            .id("test-adapter")
+            .name("Test Adapter")
+            .supported_format(ModelFormat::Safetensors)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::InvalidConfig(msg)) if msg.contains("modality")
+        ));
+    }
+
+    #[test]
+    fn test_adapter_descriptor_builder_missing_formats() {
+        let result = AdapterDescriptor::builder()
+            .id("test-adapter")
+            .name("Test Adapter")
+            .supported_modality(Modality::LLM)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::InvalidConfig(msg)) if msg.contains("format")
+        ));
     }
 
     #[test]

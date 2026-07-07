@@ -101,11 +101,19 @@ impl ModelConfigBuilder {
         self
     }
 
-    pub fn build(self) -> ModelConfig {
+    /// Build the ModelConfig, validating all required fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdapterError::InvalidConfig`] if:
+    /// - `model_id` is empty
+    pub fn build(self) -> Result<ModelConfig, super::error::AdapterError> {
         if self.config.model_id.is_empty() {
-            panic!("ModelConfig must have a model_id");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "ModelConfig must have a model_id".to_string(),
+            ));
         }
-        self.config
+        Ok(self.config)
     }
 }
 
@@ -337,13 +345,23 @@ mod tests {
             .required_format("safetensors")
             .required_quantization("q4_k")
             .min_priority(50)
-            .build();
+            .build()
+            .expect("valid model config");
 
         assert_eq!(config.model_id, "llama-3-8b");
         assert_eq!(config.required_modality, Modality::LLM);
         assert_eq!(config.required_format, Some("safetensors".to_string()));
         assert_eq!(config.required_quantization, Some("q4_k".to_string()));
         assert_eq!(config.min_priority, Some(50));
+    }
+
+    #[test]
+    fn test_model_config_builder_missing_model_id() {
+        let result = ModelConfig::builder()
+            .required_modality(Modality::LLM)
+            .build();
+
+        assert!(result.is_err());
     }
 
     #[test]

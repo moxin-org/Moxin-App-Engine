@@ -297,7 +297,8 @@ mod tests {
                 .supported_format(ModelFormat::GGUF)
                 .supported_quantizations(vec!["q4_k".to_string(), "q8_0".to_string()])
                 .priority(100)
-                .build(),
+                .build()
+                .expect("test descriptor should build"),
             AdapterDescriptor::builder()
                 .id("huggingface")
                 .name("HuggingFace Backend")
@@ -305,7 +306,8 @@ mod tests {
                 .supported_format(ModelFormat::Safetensors)
                 .supported_quantizations(vec!["bf16".to_string(), "fp16".to_string()])
                 .priority(90)
-                .build(),
+                .build()
+                .expect("test descriptor should build"),
             AdapterDescriptor::builder()
                 .id("mlx-backend")
                 .name("Apple MLX Backend")
@@ -313,7 +315,8 @@ mod tests {
                 .supported_modality(Modality::VLM)
                 .supported_format(ModelFormat::MLX)
                 .priority(80)
-                .build(),
+                .build()
+                .expect("test descriptor should build"),
         ]
     }
 
@@ -325,7 +328,8 @@ mod tests {
             .name("Test")
             .supported_modality(Modality::LLM)
             .supported_format(ModelFormat::Safetensors)
-            .build();
+            .build()
+            .expect("test descriptor should build");
 
         assert!(registry.register(adapter.clone()).is_ok());
         assert!(registry.register(adapter).is_err()); // Duplicate
@@ -342,7 +346,8 @@ mod tests {
             .model_id("llama-3-8b")
             .required_modality(Modality::LLM)
             .required_format("gguf")
-            .build();
+            .build()
+            .expect("valid model config");
 
         let hardware = HardwareProfile::builder()
             .os("linux")
@@ -366,7 +371,8 @@ mod tests {
         let config = ModelConfig::builder()
             .model_id("unknown-model")
             .required_modality(Modality::ASR) // Not supported by any adapter
-            .build();
+            .build()
+            .expect("valid model config");
 
         let hardware = HardwareProfile::default();
 
@@ -391,7 +397,8 @@ mod tests {
                     .supported_modality(Modality::LLM)
                     .supported_format(ModelFormat::Safetensors)
                     .priority(100)
-                    .build(),
+                    .build()
+                    .expect("test descriptor should build"),
             )
             .unwrap();
 
@@ -403,7 +410,8 @@ mod tests {
                     .supported_modality(Modality::LLM)
                     .supported_format(ModelFormat::Safetensors)
                     .priority(100)
-                    .build(),
+                    .build()
+                    .expect("test descriptor should build"),
             )
             .unwrap();
 
@@ -411,7 +419,8 @@ mod tests {
             .model_id("test")
             .required_modality(Modality::LLM)
             .required_format("safetensors")
-            .build();
+            .build()
+            .expect("valid model config");
 
         let hardware = HardwareProfile::default();
 

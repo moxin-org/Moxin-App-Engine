@@ -678,7 +678,8 @@ mod tests {
             .name("Test")
             .supported_modality(Modality::LLM)
             .supported_format(ModelFormat::Safetensors)
-            .build();
+            .build()
+            .expect("test descriptor should build");
 
         assert!(queue.enqueue(DeferredRequest::new(
             "req1".to_string(),
@@ -706,7 +707,8 @@ mod tests {
             .name("Test")
             .supported_modality(Modality::LLM)
             .supported_format(ModelFormat::Safetensors)
-            .build();
+            .build()
+            .expect("test descriptor should build");
 
         let mut req = DeferredRequest::new("req1".to_string(), 512, adapter);
         req.increment_retry();

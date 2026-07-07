@@ -316,16 +316,20 @@ mod tests {
             .supported_format(super::super::descriptor::ModelFormat::Safetensors)
             .priority(100)
             .estimated_latency_ms(100)
-            .build();
+            .build()
+            .expect("test descriptor should build");
 
         let hardware = HardwareProfile::builder().available_ram_mb(16384).build();
 
+        let config = ModelConfig::builder()
+            .model_id("test")
+            .required_modality(super::super::descriptor::Modality::LLM)
+            .build()
+            .expect("valid model config");
+
         let result = resolver.resolve(
             &[adapter],
-            &ModelConfig::builder()
-                .model_id("test")
-                .required_modality(super::super::descriptor::Modality::LLM)
-                .build(),
+            &config,
             &hardware,
         );
 
