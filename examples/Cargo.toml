@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "mock_llm_server_sequences_demo",
+    "mock_llm_server_demo",
     "cli_production_smoke",
     "cli_agent_logs_demo",
     "cli_plugin_lifecycle",
@@ -78,6 +80,7 @@ edition = "2024"
 anyhow = "1.0"
 async-trait = "0.1"
 axum = "0"
+reqwest = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
