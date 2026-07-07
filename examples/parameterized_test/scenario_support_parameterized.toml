@@ -1,0 +1,35 @@
+# Parameterized support ticket lookup in TOML format.
+
+[template]
+agent_id = "support_agent"
+system_prompt = "You help customers with {{department}} issues"
+tools = ["ticket_lookup"]
+
+[[template.turns]]
+user = "Check my {{department}} ticket"
+
+[[template.turns.expect]]
+kind = "call_tool"
+name = "ticket_lookup"
+
+[[template.turns.expect]]
+kind = "respond_containing"
+text = "{{department}}"
+
+[[parameters]]
+name = "billing"
+
+[parameters.vars]
+department = "billing"
+
+[[parameters]]
+name = "shipping"
+
+[parameters.vars]
+department = "shipping"
+
+[[parameters]]
+name = "returns"
+
+[parameters.vars]
+department = "returns"
