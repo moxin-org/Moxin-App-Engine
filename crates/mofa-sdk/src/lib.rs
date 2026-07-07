@@ -438,9 +438,10 @@ pub mod workflow {
 
     // DSL support
     pub use mofa_foundation::workflow::dsl::{
-        AgentRef, DslError, DslResult, EdgeDefinition, LlmAgentConfig, LoopConditionDef,
-        NodeConfigDef, NodeDefinition, RetryPolicy, TaskExecutorDef, TimeoutConfig, TransformDef,
-        WorkflowConfig, WorkflowDefinition, WorkflowDslParser, WorkflowMetadata,
+        AgentRef, DslCompiler, DslError, DslResult, EdgeDefinition, LlmAgentConfig,
+        LoopConditionDef, NodeConfigDef, NodeDefinition, RetryPolicy, TaskExecutorDef,
+        TimeoutConfig, TransformDef, WorkflowConfig, WorkflowDefinition, WorkflowDslParser,
+        WorkflowMetadata,
     };
 }
 

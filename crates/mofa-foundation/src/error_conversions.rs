@@ -117,10 +117,10 @@ mod tests {
 
     #[test]
     fn test_dsl_error_to_global() {
-        let dsl_err = DslError::Validation("missing start node".to_string());
+        let dsl_err = DslError::MissingStartNode;
         let global: GlobalError = dsl_err.into();
 
         assert_eq!(global.category(), ErrorCategory::Workflow);
-        assert!(global.to_string().contains("missing start node"));
+        assert!(global.to_string().contains("Missing Start node"));
     }
 }

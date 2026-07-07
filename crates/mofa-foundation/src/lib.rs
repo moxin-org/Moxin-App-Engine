@@ -34,6 +34,9 @@ pub mod llm;
 // workflow module
 pub mod workflow;
 
+// Cross-crate error conversions
+mod error_conversions;
+
 // coordination module
 pub mod coordination;
 

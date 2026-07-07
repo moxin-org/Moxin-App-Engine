@@ -130,6 +130,15 @@ impl<V> Command<V> {
         }
     }
 
+    /// Set control flow to create parallel branches while preserving builder state.
+    ///
+    /// Unlike [`Command::send`], this keeps any existing updates/route and only
+    /// switches the control-flow directive.
+    pub fn send_to(mut self, targets: Vec<SendCommand<V>>) -> Self {
+        self.control = ControlFlow::Send(targets);
+        self
+    }
+
     /// Create a command that just updates state (continues by default)
     pub fn just_update(key: impl Into<String>, value: V) -> Self {
         Self::new().update(key, value)
@@ -262,6 +271,16 @@ mod tests {
     }
 
     #[test]
+    fn test_send_to_preserves_route() {
+        let cmd = Command::new()
+            .route("approve")
+            .send_to(vec![SendCommand::new("node_a", json!({"task": 1}))]);
+
+        assert_eq!(cmd.route.as_deref(), Some("approve"));
+        assert!(cmd.is_send());
+    }
+
+    #[test]
     fn test_send_command() {
         let send = SendCommand::new("process", json!({"data": "test"}));
         assert_eq!(send.target, "process");
@@ -284,5 +303,25 @@ mod tests {
 
         let cmd = Command::<serde_json::Value>::just_return();
         assert!(cmd.is_return());
+    }
+
+    #[test]
+    fn test_route_builder() {
+        let cmd = Command::<serde_json::Value>::new()
+            .route("approve")
+            .continue_();
+        assert_eq!(cmd.route.as_deref(), Some("approve"));
+        assert_eq!(cmd.control, ControlFlow::Continue);
+    }
+
+    #[test]
+    fn test_route_chain_builder() {
+        let cmd = Command::new()
+            .update("status", json!("pending"))
+            .route("reject")
+            .continue_();
+        assert_eq!(cmd.route.as_deref(), Some("reject"));
+        assert_eq!(cmd.updates.len(), 1);
+        assert_eq!(cmd.control, ControlFlow::Continue);
     }
 }
