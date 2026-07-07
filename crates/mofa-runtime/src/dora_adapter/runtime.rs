@@ -379,6 +379,30 @@ impl DoraRuntime {
             RuntimeMode::Distributed => self.run_distributed().await,
         };
 
+        // In this embedded mode `Daemon::run_dataflow` may still return `Ok(DataflowResult)`
+        // even when a individual nodes have failed, Bubble that up as an error so...
+        // callers/CLI get actionable node-scoped messages. here is code
+        if let Ok(ref dataflow_result) = result {
+            if !dataflow_result.success {
+                *self.state.write().await = RuntimeState::Error;
+
+                let failing_nodes: Vec<String> = dataflow_result
+                    .node_results
+                    .iter()
+                    .filter_map(|(node_id, node_res)| match node_res {
+                        NodeResult::Error(err) => Some(format!("{}: {}", node_id, err)),
+                        NodeResult::Success => None,
+                    })
+                    .collect();
+
+                return Err(eyre::eyre!(
+                    "Dataflow execution failed ({} node(s) errored): {}",
+                    failing_nodes.len(),
+                    failing_nodes.join("; ")
+                ));
+            }
+        }
+
         match &result {
             Ok(_) => *self.state.write().await = RuntimeState::Stopped,
             Err(_) => *self.state.write().await = RuntimeState::Error,
