@@ -89,6 +89,34 @@ pub struct TaskCoordinator {
 }
 
 impl TaskCoordinator {
+    // Returns the fraction of required capabilities matched by this executor
+    fn capability_match_score(executor: &AgentInfo, required_capabilities: &[String]) -> f32 {
+        if required_capabilities.is_empty() {
+            return 1.0;
+        }
+
+        let match_count = required_capabilities
+            .iter()
+            .filter(|cap| executor.capabilities.contains(cap))
+            .count();
+
+        match_count as f32 / required_capabilities.len() as f32
+    }
+
+    fn validate_capability_match(
+        required_capabilities: &[String],
+        score: f32,
+    ) -> GlobalResult<()> {
+        if required_capabilities.is_empty() || score > 0.0 {
+            return Ok(());
+        }
+
+        Err(GlobalError::Other(format!(
+            "No executor satisfies required capabilities: {}",
+            required_capabilities.join(", ")
+        )))
+    }
+
     /// 创建新的任务协调器
     /// Create a new task coordinator
     pub fn new(strategy: DispatchStrategy) -> Self {
@@ -367,23 +395,18 @@ impl TaskCoordinator {
         let mut best: Option<(&AgentInfo, f32)> = None;
 
         for executor in available {
-            let match_count = required_capabilities
-                .iter()
-                .filter(|cap| executor.capabilities.contains(cap))
-                .count();
-
-            let score = if required_capabilities.is_empty() {
-                1.0
-            } else {
-                match_count as f32 / required_capabilities.len() as f32
-            };
+            let score = Self::capability_match_score(executor, required_capabilities);
 
             if best.is_none() || score > best.unwrap().1 {
                 best = Some((executor, score));
             }
         }
 
-        best.ok_or_else(|| GlobalError::Other("No matching executor found".to_string()))
+        let best = best.ok_or_else(|| GlobalError::Other("No matching executor found".to_string()))?;
+        // Required capabilities are a hard gate here: zero overlap should fail
+        // rather than silently routing work to an unrelated executor.
+        Self::validate_capability_match(required_capabilities, best.1)?;
+        Ok(best)
     }
 
     fn select_composite<'a>(
@@ -397,15 +420,7 @@ impl TaskCoordinator {
         let mut best: Option<(&AgentInfo, f32)> = None;
 
         for executor in available {
-            let capability_score = if required_capabilities.is_empty() {
-                1.0
-            } else {
-                let match_count = required_capabilities
-                    .iter()
-                    .filter(|cap| executor.capabilities.contains(cap))
-                    .count();
-                match_count as f32 / required_capabilities.len() as f32
-            };
+            let capability_score = Self::capability_match_score(executor, required_capabilities);
 
             let load_score = 1.0 - (executor.current_load as f32 / 100.0);
             let performance_score = executor.performance_score;
@@ -419,7 +434,12 @@ impl TaskCoordinator {
             }
         }
 
-        best.ok_or_else(|| GlobalError::Other("No matching executor found".to_string()))
+        let best = best.ok_or_else(|| GlobalError::Other("No matching executor found".to_string()))?;
+        let capability_score = Self::capability_match_score(best.0, required_capabilities);
+        // Composite scoring can still favor load/performance, so re-check the
+        // winning candidate's capability overlap before accepting it.
+        Self::validate_capability_match(required_capabilities, capability_score)?;
+        Ok(best)
     }
 
     /// 为需求的所有子任务分配Agent
@@ -546,5 +566,49 @@ mod tests {
 
         let result = coordinator.dispatch_subtask(&subtask).await.unwrap();
         assert_eq!(result.agent_id, "backend_agent");
+    }
+
+    #[tokio::test]
+    async fn test_capability_first_rejects_zero_match_executor() {
+        let coordinator = TaskCoordinator::new(DispatchStrategy::CapabilityFirst);
+
+        coordinator
+            .register_executor(make_agent("frontend_agent", "Frontend Agent", "frontend"))
+            .await;
+
+        let subtask = Subtask {
+            id: "task_2".to_string(),
+            description: "Build API".to_string(),
+            required_capabilities: vec!["backend".to_string()],
+            order: 1,
+            depends_on: Vec::new(),
+        };
+
+        let err = coordinator.dispatch_subtask(&subtask).await.unwrap_err();
+        assert!(err.to_string().contains("No executor satisfies required capabilities"));
+    }
+
+    #[tokio::test]
+    async fn test_composite_rejects_zero_match_executor() {
+        let coordinator = TaskCoordinator::new(DispatchStrategy::Composite {
+            capability_weight: 0.5,
+            load_weight: 0.25,
+            performance_weight: 0.25,
+        });
+
+        let mut agent = make_agent("frontend_agent", "Frontend Agent", "frontend");
+        agent.performance_score = 1.0;
+        coordinator.register_executor(agent).await;
+
+        let subtask = Subtask {
+            id: "task_3".to_string(),
+            description: "Build API".to_string(),
+            required_capabilities: vec!["backend".to_string()],
+            order: 1,
+            depends_on: Vec::new(),
+        };
+
+        let err = coordinator.dispatch_subtask(&subtask).await.unwrap_err();
+        assert!(err.to_string().contains("No executor satisfies required capabilities"));
     }
 }
