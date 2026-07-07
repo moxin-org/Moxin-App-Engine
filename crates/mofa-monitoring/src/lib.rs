@@ -23,6 +23,7 @@
 //! # }
 //! ```
 
+pub mod alerts;
 mod dashboard;
 pub mod tracing;
 
