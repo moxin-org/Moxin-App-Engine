@@ -4,6 +4,10 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+fn duration_to_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Trait for injectable time sources.
 pub trait Clock: Send + Sync {
     /// Returns the current time in milliseconds since an arbitrary epoch.
@@ -37,7 +41,7 @@ impl MockClock {
     /// Create a clock starting at the given duration from epoch.
     pub fn starting_at(start: Duration) -> Self {
         Self {
-            current_ms: AtomicU64::new(start.as_millis() as u64),
+            current_ms: AtomicU64::new(duration_to_millis(start)),
             auto_advance_ms: RwLock::new(None),
         }
     }
@@ -45,24 +49,44 @@ impl MockClock {
     /// Advance the clock by the given duration.
     pub fn advance(&self, duration: Duration) {
         self.current_ms
-            .fetch_add(duration.as_millis() as u64, Ordering::Relaxed);
+            .fetch_add(duration_to_millis(duration), Ordering::Relaxed);
     }
 
     /// Set the clock to an exact time.
     pub fn set(&self, duration: Duration) {
         self.current_ms
-            .store(duration.as_millis() as u64, Ordering::Relaxed);
+            .store(duration_to_millis(duration), Ordering::Relaxed);
     }
 
     /// Enable auto-advance: each call to [`now_millis`](Clock::now_millis)
     /// automatically moves time forward by the given step.
     pub fn set_auto_advance(&self, step: Duration) {
-        *self.auto_advance_ms.write().expect("lock poisoned") = Some(step.as_millis() as u64);
+        *self.auto_advance_ms.write().expect("lock poisoned") = Some(duration_to_millis(step));
     }
 
     /// Disable auto-advance.
     pub fn clear_auto_advance(&self) {
         *self.auto_advance_ms.write().expect("lock poisoned") = None;
+    }
+
+    /// Return the current time without applying auto-advance.
+    pub fn peek_millis(&self) -> u64 {
+        self.current_ms.load(Ordering::Relaxed)
+    }
+
+    /// Compute an absolute deadline relative to the current time.
+    pub fn deadline_after(&self, timeout: Duration) -> u64 {
+        self.peek_millis().saturating_add(duration_to_millis(timeout))
+    }
+
+    /// Check whether the current time has reached the given deadline.
+    pub fn has_reached_deadline(&self, deadline_ms: u64) -> bool {
+        self.peek_millis() >= deadline_ms
+    }
+
+    /// Return the remaining duration until the deadline, floored at zero.
+    pub fn remaining_until(&self, deadline_ms: u64) -> Duration {
+        Duration::from_millis(deadline_ms.saturating_sub(self.peek_millis()))
     }
 }
 
