@@ -50,12 +50,10 @@ impl ShellCommandTool {
             "echo".to_string(),
             "date".to_string(),
             "whoami".to_string(),
-            "cat".to_string(),
             "head".to_string(),
             "tail".to_string(),
             "wc".to_string(),
             "grep".to_string(),
-            "find".to_string(),
         ])
     }
 
@@ -66,6 +64,14 @@ impl ShellCommandTool {
         self.allowed_commands
             .iter()
             .any(|allowed| command == allowed || command.starts_with(&format!("{} ", allowed)))
+    }
+
+    /// Check for dangerous arguments like redirection or piping
+    fn has_dangerous_args(args: &[String]) -> bool {
+        let dangerous_patterns = ["|", ">", "<", "$", "`", ";", "&", ">>", "2>", "&>"];
+        args.iter().any(|arg| {
+            dangerous_patterns.iter().any(|pattern| arg.contains(pattern))
+        })
     }
 }
 
@@ -96,6 +102,13 @@ impl ToolExecutor for ShellCommandTool {
                     .collect()
             })
             .unwrap_or_default();
+
+        if Self::has_dangerous_args(&args) {
+            return Err(mofa_kernel::plugin::PluginError::ExecutionFailed(format!(
+                "Dangerous shell operators detected in arguments: {:?}",
+                args
+            )));
+        }
 
         let mut cmd = Command::new(command);
         cmd.args(&args);
