@@ -291,6 +291,9 @@ async fn run_command(cli: Cli) -> CliResult<()> {
                         commands::plugin::repository::add(ctx, &id, &url, description.as_deref())
                             .await?;
                     }
+                    cli::PluginRepositoryCommands::Remove { id } => {
+                        commands::plugin::repository::remove(ctx, &id).await?;
+                    }
                 },
             }
         }

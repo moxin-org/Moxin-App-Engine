@@ -481,6 +481,12 @@ pub enum PluginRepositoryCommands {
         #[arg(short, long)]
         description: Option<String>,
     },
+
+    /// Remove a plugin repository
+    Remove {
+        /// Repository identifier
+        id: String,
+    },
 }
 
 /// Session management subcommands

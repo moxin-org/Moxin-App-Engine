@@ -67,6 +67,21 @@ pub async fn add(
     Ok(())
 }
 
+/// Remove a plugin repository
+pub async fn remove(ctx: &CliContext, id: &str) -> Result<(), CliError> {
+    let removed = ctx.plugin_repo_store.delete(id)?;
+
+    if removed {
+        println!("{} Repository '{}' removed", "✓".green(), id);
+        Ok(())
+    } else {
+        Err(CliError::PluginError(format!(
+            "Repository '{}' not found",
+            id
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +113,37 @@ mod tests {
         let stored = ctx.plugin_repo_store.get("custom").unwrap().unwrap();
         assert_eq!(stored.url, "https://example.org/plugins");
         assert!(stored.last_synced.is_some());
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_existing_repository() {
+        let temp = TempDir::new().unwrap();
+        let ctx = CliContext::with_temp_dir(temp.path()).await.unwrap();
+
+        add(
+            &ctx,
+            "custom",
+            "https://example.org/plugins",
+            Some("Example repo"),
+        )
+        .await
+        .unwrap();
+
+        remove(&ctx, "custom").await.unwrap();
+        assert!(ctx.plugin_repo_store.get("custom").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn remove_returns_error_for_missing_repository() {
+        let temp = TempDir::new().unwrap();
+        let ctx = CliContext::with_temp_dir(temp.path()).await.unwrap();
+
+        let err = remove(&ctx, "missing").await.unwrap_err();
+        match err {
+            CliError::PluginError(message) => {
+                assert!(message.contains("not found"));
+            }
+            other => panic!("Unexpected error type: {}", other),
+        }
     }
 }
