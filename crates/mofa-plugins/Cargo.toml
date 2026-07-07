@@ -56,6 +56,8 @@ dirs = "5.0"
 md-5 = "0.10"
 backoff = { version = "0.4", features = ["tokio"] }
 futures = "0.3"
+pdf-extract = "0.10"
+
 
 [lints]
 workspace = true
