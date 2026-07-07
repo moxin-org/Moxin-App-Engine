@@ -133,10 +133,7 @@ async fn handle_ws_session(mut socket: axum::extract::ws::WebSocket, state: AppS
     }
 
     // ── 3. Run the orchestrator ───────────────────────────────────────────
-    use mofa_foundation::inference::types::InferenceRequest;
-    let prompt = req.to_prompt();
-    let inference_req =
-        InferenceRequest::new(&req.model, &prompt, 7168).with_priority(req.priority());
+    let inference_req = req.to_inference_request(7168);
 
     let (_result, token_stream) = {
         let mut orch = state.orchestrator.write().await;

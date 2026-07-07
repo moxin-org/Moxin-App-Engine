@@ -196,8 +196,7 @@ pub async fn chat_completions(
 
     // ── Build InferenceRequest ────────────────────────────────────────────────
     let prompt = req.to_prompt();
-    let inference_req =
-        InferenceRequest::new(&req.model, &prompt, 7168).with_priority(req.priority());
+    let inference_req = req.to_inference_request(7168);
 
     // ── Invoke orchestrator ───────────────────────────────────────────────────
     let start = Instant::now();

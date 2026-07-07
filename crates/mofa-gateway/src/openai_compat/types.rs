@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use mofa_foundation::inference::types::RequestPriority;
+use mofa_foundation::inference::types::{InferenceRequest, RequestPriority};
 use mofa_foundation::inference::{OrchestratorConfig, RoutingPolicy};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -79,6 +79,25 @@ impl ChatCompletionRequest {
             // Future-proof: treat unknown variants as Normal.
             _ => RequestPriority::Normal,
         }
+    }
+
+    /// Convert API request into an internal inference request.
+    ///
+    /// Carries generation controls (`max_tokens`, `temperature`) forward so
+    /// downstream routing/providers can consume them instead of silently
+    /// dropping user-specified parameters.
+    pub fn to_inference_request(&self, required_memory_mb: usize) -> InferenceRequest {
+        let mut req = InferenceRequest::new(&self.model, self.to_prompt(), required_memory_mb)
+            .with_priority(self.priority());
+
+        if let Some(max_tokens) = self.max_tokens {
+            req = req.with_max_tokens(max_tokens);
+        }
+        if let Some(temperature) = self.temperature {
+            req = req.with_temperature(temperature);
+        }
+
+        req
     }
 }
 
@@ -394,6 +413,28 @@ mod tests {
         let prompt = req.to_prompt();
         assert!(prompt.contains("system: Be helpful."));
         assert!(prompt.contains("user: Hi"));
+    }
+
+    #[test]
+    fn test_to_inference_request_propagates_generation_params() {
+        let req = ChatCompletionRequest {
+            model: "mofa-local".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Generate".into(),
+            }],
+            stream: false,
+            max_tokens: Some(128),
+            temperature: Some(0.2),
+            priority: RequestPriorityParam::High,
+        };
+
+        let internal = req.to_inference_request(7168);
+        assert_eq!(internal.model_id, "mofa-local");
+        assert_eq!(internal.required_memory_mb, 7168);
+        assert_eq!(internal.max_tokens, Some(128));
+        assert_eq!(internal.temperature, Some(0.2));
+        assert_eq!(internal.priority, RequestPriority::High);
     }
 
     #[test]

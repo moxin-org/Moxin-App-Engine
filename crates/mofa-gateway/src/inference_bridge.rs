@@ -130,6 +130,17 @@ impl InferenceBridge {
         .with_priority(RequestPriority::Normal)
         .with_precision(Precision::F16);
 
+        let inference_request = if let Some(max_tokens) = request.max_tokens {
+            inference_request.with_max_tokens(max_tokens)
+        } else {
+            inference_request
+        };
+        let inference_request = if let Some(temperature) = request.temperature {
+            inference_request.with_temperature(temperature)
+        } else {
+            inference_request
+        };
+
         // Call the orchestrator
         let result = {
             let mut orch = self.orchestrator.lock();

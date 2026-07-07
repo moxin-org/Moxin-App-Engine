@@ -139,6 +139,18 @@ pub struct InferenceRequest {
     pub priority: RequestPriority,
     /// Preferred precision level (orchestrator may downgrade under pressure)
     pub preferred_precision: Precision,
+    /// Optional cap for completion length.
+    ///
+    /// This is forwarded from API-level request parameters so downstream
+    /// providers can enforce generation limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// Optional sampling temperature.
+    ///
+    /// This is forwarded from API-level request parameters so downstream
+    /// providers can control generation stochasticity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
 }
 
 impl InferenceRequest {
@@ -150,6 +162,8 @@ impl InferenceRequest {
             required_memory_mb: memory_mb,
             priority: RequestPriority::default(),
             preferred_precision: Precision::F16,
+            max_tokens: None,
+            temperature: None,
         }
     }
 
@@ -162,6 +176,18 @@ impl InferenceRequest {
     /// Set the preferred precision.
     pub fn with_precision(mut self, precision: Precision) -> Self {
         self.preferred_precision = precision;
+        self
+    }
+
+    /// Set maximum generated tokens.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set sampling temperature.
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
         self
     }
 }
@@ -206,12 +232,16 @@ mod tests {
     fn test_request_builder() {
         let req = InferenceRequest::new("llama-3-13b", "Hello world", 13312)
             .with_priority(RequestPriority::High)
-            .with_precision(Precision::Q8);
+            .with_precision(Precision::Q8)
+            .with_max_tokens(256)
+            .with_temperature(0.7);
 
         assert_eq!(req.model_id, "llama-3-13b");
         assert_eq!(req.required_memory_mb, 13312);
         assert_eq!(req.priority, RequestPriority::High);
         assert_eq!(req.preferred_precision, Precision::Q8);
+        assert_eq!(req.max_tokens, Some(256));
+        assert_eq!(req.temperature, Some(0.7));
     }
 
     #[test]
@@ -284,10 +314,26 @@ mod tests {
     fn test_inference_request_serde_roundtrip() {
         let req = InferenceRequest::new("llama-3-13b", "Hello world", 13312)
             .with_priority(RequestPriority::High)
-            .with_precision(Precision::Q8);
+            .with_precision(Precision::Q8)
+            .with_max_tokens(128)
+            .with_temperature(0.4);
         let json = serde_json::to_string(&req).unwrap();
         let back: InferenceRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn test_inference_request_deserialize_without_generation_fields() {
+        let json = r#"{
+            "model_id":"m",
+            "prompt":"p",
+            "required_memory_mb":1024,
+            "priority":"Normal",
+            "preferred_precision":"F16"
+        }"#;
+        let req: InferenceRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.max_tokens, None);
+        assert_eq!(req.temperature, None);
     }
 
     #[test]
