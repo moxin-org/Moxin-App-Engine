@@ -222,6 +222,25 @@ pub fn to_scored_documents(results: Vec<SearchResult>, source: &str) -> Vec<Scor
         .collect()
 }
 
+/// Parses a PDF file and extracts its readable text.
+pub fn parse_pdf_document(path: &std::path::Path) -> GlobalResult<String> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        GlobalError::Runtime(format!("failed to read pdf {}: {}", path.display(), e))
+    })?;
+    pdf_extract::extract_text_from_mem(&bytes)
+        .map_err(|e| GlobalError::Runtime(format!("failed to parse pdf {}: {}", path.display(), e)))
+}
+
+/// Parses an HTML file and extracts its readable text.
+pub fn parse_html_document(path: &std::path::Path) -> GlobalResult<String> {
+    let html_bytes = std::fs::read(path).map_err(|e| {
+        GlobalError::Runtime(format!("failed to read html {}: {}", path.display(), e))
+    })?;
+    html2text::from_read(html_bytes.as_slice(), 10000).map_err(|e| {
+        GlobalError::Runtime(format!("failed to parse html {}: {:?}", path.display(), e))
+    })
+}
+
 fn chunk_text(text: &str, config: &RagIngestionConfig) -> Vec<String> {
     match config.chunking {
         ChunkingStrategy::Characters => {
@@ -490,5 +509,52 @@ mod tests {
         let merged = merge_chunks(vec![old], vec![new]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].text, "new");
+    }
+
+    #[test]
+    fn parse_html_document_extracts_text() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "test_doc_{}.html",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, r#"<html><body><h1>Hello HTML</h1><p>Test <a href="http://a.com">link</a></p><script>ignore this</script></body></html>"#).unwrap();
+
+        let text = super::parse_html_document(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        println!("EXTRACTED HTML:\n{}", text);
+        assert!(text.contains("Hello HTML"));
+        assert!(text.contains("Test"));
+        assert!(text.contains("link"));
+        assert!(!text.contains("ignore this"));
+    }
+
+    #[test]
+    fn parse_pdf_document_fails_gracefully_on_invalid_pdf() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "test_doc_{}.pdf",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"not a valid pdf file").unwrap();
+
+        let result = super::parse_pdf_document(&path);
+        let _ = std::fs::remove_file(&path);
+
+        // We just want to ensure it doesn't panic and returns a GlobalError
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("failed to parse pdf")
+        );
     }
 }

@@ -270,7 +270,19 @@ async fn query_qdrant(
 fn load_documents(paths: &[PathBuf]) -> Result<Vec<Document>, CliError> {
     let mut documents = Vec::new();
     for (index, path) in paths.iter().enumerate() {
-        let text = fs::read_to_string(path)?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let text = match ext.as_str() {
+            "pdf" => mofa_runtime::rag::parse_pdf_document(path).map_err(map_global_error)?,
+            "html" | "htm" => {
+                mofa_runtime::rag::parse_html_document(path).map_err(map_global_error)?
+            }
+            _ => fs::read_to_string(path)?,
+        };
+
         let stem = path
             .file_stem()
             .and_then(|value| value.to_str())

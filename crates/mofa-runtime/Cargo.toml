@@ -44,7 +44,10 @@ toml = "0.8"
 config.workspace = true
 regex.workspace = true
 chrono.workspace = true
-cron.workspace = true
+cron = "0.12"
+html2text = "0.16.7"
+pdf-extract = "0.10.0"
+
 
 [lints]
 workspace = true
