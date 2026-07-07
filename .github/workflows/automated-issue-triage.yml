@@ -233,15 +233,17 @@ jobs:
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
           TRIAGE_RESULT: ${{ steps.triage.outputs.result }}
         uses: actions/github-script@v7
+        env:
+          LOW_CONFIDENCE_THRESHOLD: 0.6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issueNumber = parseInt(process.env.ISSUE_NUMBER || '0', 10);
             const triageResult = process.env.TRIAGE_RESULT || '';
+            const lowConfidenceThreshold = parseFloat(process.env.LOW_CONFIDENCE_THRESHOLD || '0.6');
             
             let triageData;
             try {
-              // Try to parse as JSON array
               triageData = JSON.parse(triageResult);
               if (!Array.isArray(triageData)) {
                 triageData = [triageData];
@@ -252,16 +254,54 @@ jobs:
               return;
             }
             
-            // Find the entry for this issue
             const issueTriage = triageData.find(t => t.issue_number === issueNumber);
             if (!issueTriage) {
               core.info(`No triage result found for issue #${issueNumber}`);
               return;
             }
             
+            const confidence = typeof issueTriage.confidence === 'number' ? issueTriage.confidence : 1.0;
             const labelsToAdd = issueTriage.labels_to_add || [];
             const labelsToRemove = issueTriage.labels_to_remove || [];
+            core.info(`Triage confidence: ${confidence.toFixed(3)}`);
             
+            if (confidence < lowConfidenceThreshold) {
+              core.info('Low-confidence triage detected, buffering for manual review');
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ['status/manual-triage'],
+              });
+              
+              const suggestionPayload = JSON.stringify({
+                labels_to_add: labelsToAdd,
+                labels_to_remove: labelsToRemove,
+                explanation: issueTriage.explanation || 'No explanation provided.',
+                confidence,
+                issue_number: issueNumber,
+              }, null, 2);
+
+              const lowConfComment = `Low-confidence triage result (confidence: ${confidence.toFixed(3)}). Please review before applying labels.
+
+Suggested payload:
+\`\`\`json
+${suggestionPayload}
+\`\`\`
+
+Confidence: ${confidence.toFixed(3)}
+
+When you are ready to accept the automated suggestion, comment \`/triage-apply\` on this issue.`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: lowConfComment,
+              });
+              return;
+            }
+
             if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
@@ -282,13 +322,12 @@ jobs:
                     name: label,
                   });
                 } catch (e) {
-                  // Label might not exist, ignore
                   core.info(`Could not remove label ${label}: ${e.message}`);
                 }
               }
               core.info(`Removed labels: ${labelsToRemove.join(', ')}`);
             }
-            
+
             if (labelsToAdd.length === 0 && labelsToRemove.length === 0) {
               core.info('No label changes needed');
             }

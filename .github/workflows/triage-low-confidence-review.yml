@@ -1,0 +1,119 @@
+name: Low-Confidence Triage Review
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  review:
+    if: >
+      github.event.comment.body == '/triage-apply' &&
+      github.event.issue.pull_request == null &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply low-confidence labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issueNumber = context.payload.issue.number;
+            // Fetch issue comments and find the most recent low-confidence summary
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const triageComment = [...comments]
+              .reverse()
+              .find(
+                c =>
+                  c.body &&
+                  c.user &&
+                  c.user.login === 'github-actions[bot]' &&
+                  c.body.includes('Low-confidence triage result'),
+              );
+
+            if (!triageComment) {
+              core.setFailed('No low-confidence triage comment found');
+              return;
+            }
+
+            const jsonMatch = triageComment.body.match(/```json\n([\s\S]+?)\n```/);
+            if (!jsonMatch) {
+              core.setFailed('Could not find JSON payload in triage comment');
+              return;
+            }
+
+            let payload;
+            try {
+              payload = JSON.parse(jsonMatch[1]);
+            } catch (e) {
+              core.setFailed(`Error parsing JSON payload: ${e.message}`);
+              return;
+            }
+
+            const issueTriage = Array.isArray(payload)
+              ? payload.find(t => t.issue_number === issueNumber)
+              : payload.issue_number === issueNumber
+                ? payload
+                : null;
+
+            if (!issueTriage) {
+              core.setFailed(`No triage entry for #${issueNumber}`);
+              return;
+            }
+
+            const labelsToAdd = issueTriage.labels_to_add || issueTriage.add || [];
+            const labelsToRemove = issueTriage.labels_to_remove || issueTriage.remove || [];
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: labelsToAdd,
+              });
+              core.info(`Added labels: ${labelsToAdd.join(', ')}`);
+            }
+
+            if (labelsToRemove.length > 0) {
+              for (const label of labelsToRemove) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    name: label,
+                  });
+                } catch (error) {
+                  core.info(`Could not remove ${label}: ${error.message}`);
+                }
+              }
+              core.info(`Removed labels: ${labelsToRemove.join(', ')}`);
+            }
+
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                name: 'status/manual-triage',
+              });
+              core.info('Removed status/manual-triage label');
+            } catch (error) {
+              core.info('status/manual-triage label not present to remove');
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: 'Low-confidence triage approved (via /triage-apply). Labels applied as suggested.',
+            });
