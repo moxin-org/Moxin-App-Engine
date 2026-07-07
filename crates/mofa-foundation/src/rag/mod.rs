@@ -3,6 +3,7 @@
 //! Provides concrete implementations of the vector store trait defined
 //! in mofa-kernel, along with utilities for document chunking.
 
+pub mod advanced;
 pub mod chunker;
 pub mod default_reranker;
 pub mod embedding_adapter;
@@ -15,6 +16,11 @@ pub mod score_reranker;
 pub mod similarity;
 pub mod streaming_generator;
 pub mod vector_store;
+
+pub use advanced::{
+    AdaptiveChunkingConfig, AdvancedRagConfig, FusionMethod, HybridSearchConfig, MultiVectorConfig,
+    QueryExpansionConfig, RerankConfig, RepresentationType,
+};
 
 #[cfg(feature = "qdrant")]
 pub mod qdrant_store;
