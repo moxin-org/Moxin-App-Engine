@@ -67,7 +67,7 @@ impl WorkflowDslParser {
         agent_registry: &HashMap<String, Arc<LLMAgent>>,
     ) -> DslResult<crate::workflow::WorkflowGraph> {
         // Validate definition
-        Self::validate(&definition)?;
+        Self::validate(&definition, agent_registry)?;
 
         // Build workflow
         let mut builder = WorkflowBuilder::new(&definition.metadata.id, &definition.metadata.name)
@@ -91,7 +91,10 @@ impl WorkflowDslParser {
     }
 
     /// Validate workflow definition
-    fn validate(definition: &WorkflowDefinition) -> DslResult<()> {
+    fn validate(
+        definition: &WorkflowDefinition,
+        agent_registry: &HashMap<String, Arc<LLMAgent>>,
+    ) -> DslResult<()> {
         // Check for required nodes
         let node_ids: Vec<&str> = definition.nodes.iter().map(|n| n.id()).collect();
 
@@ -135,12 +138,12 @@ impl WorkflowDslParser {
             }
         }
 
-        // Verify agent references
+        // Verify agent references against the runtime agent registry.
         for node in &definition.nodes {
             if let NodeDefinition::LlmAgent { agent, .. } = node {
                 match agent {
                     AgentRef::Registry { agent_id } => {
-                        if !definition.agents.contains_key(agent_id) {
+                        if !agent_registry.contains_key(agent_id) {
                             return Err(DslError::AgentNotFound(agent_id.clone()));
                         }
                     }
@@ -271,5 +274,71 @@ impl WorkflowDslParser {
         }
 
         Ok(builder)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::{LLMAgentBuilder, MockLLMProvider};
+
+    fn valid_workflow_yaml_with_registry_agent() -> &'static str {
+        r#"
+metadata:
+  id: test-workflow
+  name: test-workflow
+nodes:
+  - type: start
+    id: start
+  - type: llm_agent
+    id: llm_1
+    name: llm_1
+    agent:
+      agent_id: mock-agent
+  - type: end
+    id: end
+edges:
+  - from: start
+    to: llm_1
+  - from: llm_1
+    to: end
+"#
+    }
+
+    #[tokio::test]
+    async fn build_with_agents_accepts_runtime_registry_agents_without_dsl_agent_map() {
+        let definition = WorkflowDslParser::from_yaml(valid_workflow_yaml_with_registry_agent())
+            .expect("workflow yaml should parse");
+
+        let provider = Arc::new(MockLLMProvider::new("mock"));
+        let agent = Arc::new(
+            LLMAgentBuilder::new()
+                .with_id("mock-agent")
+                .with_name("Mock Agent")
+                .with_provider(provider)
+                .build(),
+        );
+
+        let mut registry = HashMap::new();
+        registry.insert("mock-agent".to_string(), agent);
+
+        let build_result = WorkflowDslParser::build_with_agents(definition, &registry).await;
+        assert!(
+            build_result.is_ok(),
+            "build should succeed when agent exists in runtime registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_with_agents_fails_when_registry_agent_is_missing_at_runtime() {
+        let definition = WorkflowDslParser::from_yaml(valid_workflow_yaml_with_registry_agent())
+            .expect("workflow yaml should parse");
+        let empty_registry = HashMap::new();
+
+        let build_result = WorkflowDslParser::build_with_agents(definition, &empty_registry).await;
+        assert!(matches!(
+            build_result,
+            Err(DslError::AgentNotFound(agent_id)) if agent_id == "mock-agent"
+        ));
     }
 }
