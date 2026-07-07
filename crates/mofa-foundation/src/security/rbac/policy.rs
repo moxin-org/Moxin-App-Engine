@@ -39,7 +39,7 @@ impl RbacPolicy {
     pub fn assign_role(&mut self, subject: impl Into<String>, role: impl Into<String>) {
         self.subject_roles
             .entry(subject.into())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(role.into());
     }
 

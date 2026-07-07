@@ -10,6 +10,7 @@ mofa-kernel = { path = "../../crates/mofa-kernel" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+dotenvy.workspace = true
 tempfile = "3.8"
 
 [lints]

@@ -455,10 +455,10 @@ impl SwarmScheduler for ParallelScheduler {
                     idx,
                     "dag stalled".into(),
                 ));
-            } else if task.status == crate::swarm::SubtaskStatus::Skipped {
-                if !results.iter().any(|r| r.node_index == idx.index()) {
-                    results.push(TaskExecutionResult::skipped(task, idx, "skipped".into()));
-                }
+            } else if task.status == crate::swarm::SubtaskStatus::Skipped
+                && !results.iter().any(|r| r.node_index == idx.index())
+            {
+                results.push(TaskExecutionResult::skipped(task, idx, "skipped".into()));
             }
         }
 

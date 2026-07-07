@@ -108,6 +108,9 @@ impl SamplingStrategy {
 
 /// Tracer 配置
 /// Tracer configuration
+/// 
+/// 用于定义追踪器的全局设置，包括服务名称、版本、环境以及采样策略等。
+/// Used to define global settings for tracers, including service name, version, environment, and sampling strategy.
 #[derive(Debug, Clone)]
 pub struct TracerConfig {
     /// 服务名称
@@ -173,6 +176,9 @@ impl TracerConfig {
 
 /// Span 处理器 trait
 /// Span processor trait
+/// 
+/// 定义了 Span 生命周期中的回调接口。实现此 trait 的处理器可以决定如何处理 Span 数据（如导出、过滤、缓冲等）。
+/// Defines callback interfaces during the Span lifecycle. Processors implementing this trait decide how to handle Span data (e.g., exporting, filtering, buffering).
 #[async_trait::async_trait]
 pub trait SpanProcessor: Send + Sync {
     /// Span 开始时调用
@@ -191,6 +197,9 @@ pub trait SpanProcessor: Send + Sync {
 
 /// 简单 Span 处理器 - 直接导出
 /// Simple Span Processor - Export directly
+/// 
+/// 每当一个 Span 结束时，立即调用导出器将其同步导出。适用于调试或低流量场景。
+/// Immediately calls the exporter to synchronously export each Span as it ends. Suitable for debugging or low-traffic scenarios.
 pub struct SimpleSpanProcessor {
     exporter: Arc<dyn TracingExporter>,
 }
@@ -225,6 +234,9 @@ impl SpanProcessor for SimpleSpanProcessor {
 
 /// 批处理 Span 处理器
 /// Batch Span Processor
+/// 
+/// 将 Span 数据缓冲在内存中，并在达到批次大小或最大队列限制时异步导出。适用于生产环境以减少导出开销。
+/// Buffers Span data in memory and asynchronously exports it when batch size or max queue limits are reached. Suitable for production to reduce export overhead.
 pub struct BatchSpanProcessor {
     exporter: Arc<dyn TracingExporter>,
     buffer: Arc<RwLock<Vec<SpanData>>>,
@@ -327,6 +339,9 @@ impl SpanProcessor for BatchSpanProcessor {
 
 /// Tracer - 追踪器
 /// Tracer - Tracing component
+/// 
+/// Tracer 是追踪系统的核心入口点，用于创建和管理 Span。每个 Tracer 通常关联到一个特定的服务或组件。
+/// The Tracer is the core entry point of the tracing system, used to create and manage Spans. Each Tracer is typically associated with a specific service or component.
 pub struct Tracer {
     config: TracerConfig,
     processor: Arc<dyn SpanProcessor>,
@@ -436,6 +451,9 @@ impl Tracer {
 
 /// Tracer Provider - 管理多个 Tracer
 /// Tracer Provider - Manages multiple Tracers
+/// 
+/// 负责维护追踪配置和 Span 处理器，并按名称提供 `Tracer` 实例。它通常由应用生命周期全局持有。
+/// Responsible for maintaining tracing configurations and Span processors, and providing `Tracer` instances by name. It is typically held globally by the application lifecycle.
 pub struct TracerProvider {
     config: TracerConfig,
     processor: Arc<dyn SpanProcessor>,

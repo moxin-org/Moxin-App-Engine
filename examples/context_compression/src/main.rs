@@ -256,6 +256,7 @@ async fn demo_summarizing_compressor() -> Result<(), Box<dyn std::error::Error>>
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

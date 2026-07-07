@@ -112,6 +112,7 @@ chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
 hex = "0.4"
 lazy_static = "1.4"
+dotenvy = "0.15"
 
 
 [workspace.lints.rust]

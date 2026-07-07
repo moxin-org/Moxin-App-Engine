@@ -37,8 +37,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run clippy (fail fast on errors)
-        run: cargo clippy --workspace --all-features -- -D errors
+      - name: Run clippy (fail fast on warnings)
+        run: cargo clippy --workspace --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})

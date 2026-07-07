@@ -841,6 +841,7 @@ fn create_llm_agent() -> Result<LLMAgent, Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     // 初始化日志
     // Initialize logging
     tracing_subscriber::fmt()

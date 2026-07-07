@@ -155,12 +155,12 @@ impl<S: GraphState> StateGraphImpl<S> {
                 }
 
                 // Include fallback node edges from NodePolicy
-                if let Some(policy) = self.policies.get(&node_id) {
-                    if let Some(fallback) = &policy.fallback_node {
-                        if fallback != END && !reachable.contains(fallback) {
-                            stack.push(fallback.to_string());
-                        }
-                    }
+                if let Some(policy) = self.policies.get(&node_id)
+                    && let Some(fallback) = &policy.fallback_node
+                    && fallback != END
+                    && !reachable.contains(fallback)
+                {
+                    stack.push(fallback.to_string());
                 }
             }
         }

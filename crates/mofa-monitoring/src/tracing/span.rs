@@ -13,23 +13,26 @@ use tokio::sync::RwLock;
 
 /// Span 类型
 /// Span types
+///
+/// 表示 Span 在分布式追踪系统中的角色。根据 OpenTelemetry 标准定义。
+/// Represents the role of a Span in a distributed tracing system. Defined according to OpenTelemetry standards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SpanKind {
-    /// 内部操作
-    /// Internal operation
+    /// 内部操作：在应用内部发生的常规操作。
+    /// Internal operation: Regular operations occurring within the application.
     #[default]
     Internal,
-    /// 服务器端（处理请求）
-    /// Server side (handling request)
+    /// 服务器端：处理来自外部的传入请求。
+    /// Server side: Handling an incoming request from an external source.
     Server,
-    /// 客户端（发起请求）
-    /// Client side (initiating request)
+    /// 客户端：向外部服务发起传出请求。
+    /// Client side: Initiating an outgoing request to an external service.
     Client,
-    /// 消息生产者
-    /// Message producer
+    /// 消息生产者：向队列或主题发送消息。
+    /// Message producer: Sending a message to a queue or topic.
     Producer,
-    /// 消息消费者
-    /// Message consumer
+    /// 消息消费者：从队列或主题处理消息。
+    /// Message consumer: Processing a message from a queue or topic.
     Consumer,
 }
 
@@ -47,22 +50,28 @@ impl std::fmt::Display for SpanKind {
 
 /// Span 状态
 /// Span status
+///
+/// 表示 Span 完成时的结果状态（成功、错误或未设置）。
+/// Represents the resulting status of a Span upon completion (Success, Error, or Unset).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SpanStatus {
-    /// 未设置
-    /// Unset
+    /// 未设置：默认状态，表示没有明确的成功或失败。
+    /// Unset: Default status, indicating no explicit success or failure.
     #[default]
     Unset,
-    /// 成功
-    /// Success
+    /// 成功：操作已成功完成。
+    /// Success: The operation completed successfully.
     Ok,
-    /// 错误
-    /// Error
+    /// 错误：操作失败，并附带错误消息。
+    /// Error: The operation failed, accompanied by an error message.
     Error { message: String },
 }
 
 /// Span 属性值
 /// Span attribute value
+///
+/// 这是一个枚举，涵盖了可以附加到 Span 的各种数据类型，包括基本类型及其数组。
+/// An enum covering various data types that can be attached to a Span, including primitives and their arrays.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SpanAttribute {
@@ -458,7 +467,23 @@ impl Clone for Span {
 }
 
 /// Span 构建器
+/// Span 构建器
 /// Span builder
+///
+/// 提供流式接口来配置和创建 Span。支持设置类型、父上下文、属性、链接和开始时间。
+/// Provides a fluent interface to configure and create Spans. Supports setting kind, parent context, attributes, links, and start time.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use mofa_monitoring::tracing::{SpanBuilder, SpanKind};
+///
+/// let span = SpanBuilder::new("my-operation", "example-service")
+///     .with_kind(SpanKind::Server)
+///     .with_attribute("http.method", "GET")
+///     .with_attribute("http.url", "https://example.com")
+///     .start();
+/// ```
 pub struct SpanBuilder {
     name: String,
     kind: SpanKind,

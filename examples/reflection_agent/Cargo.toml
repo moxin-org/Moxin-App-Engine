@@ -9,6 +9,7 @@ mofa-sdk = { path = "../../crates/mofa-sdk"}
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+dotenvy.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
 [lints]

@@ -90,17 +90,20 @@ pub enum FallbackCondition {
 impl FallbackCondition {
     /// Returns `true` when `error` matches this condition.
     pub fn matches(&self, error: &LLMError) -> bool {
-        match (self, error) {
-            (Self::RateLimited, LLMError::RateLimited(_)) => true,
-            (Self::QuotaExceeded, LLMError::QuotaExceeded(_)) => true,
-            (Self::NetworkError, LLMError::NetworkError(_)) => true,
-            (Self::Timeout, LLMError::Timeout(_)) => true,
-            (Self::AuthError, LLMError::AuthError(_)) => true,
-            (Self::ProviderUnavailable, LLMError::ProviderNotSupported(_)) => true,
-            (Self::ContextLengthExceeded, LLMError::ContextLengthExceeded(_)) => true,
-            (Self::ModelNotFound, LLMError::ModelNotFound(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self, error),
+            (Self::RateLimited, LLMError::RateLimited(_))
+                | (Self::QuotaExceeded, LLMError::QuotaExceeded(_))
+                | (Self::NetworkError, LLMError::NetworkError(_))
+                | (Self::Timeout, LLMError::Timeout(_))
+                | (Self::AuthError, LLMError::AuthError(_))
+                | (Self::ProviderUnavailable, LLMError::ProviderNotSupported(_))
+                | (
+                    Self::ContextLengthExceeded,
+                    LLMError::ContextLengthExceeded(_)
+                )
+                | (Self::ModelNotFound, LLMError::ModelNotFound(_))
+        )
     }
 
     /// Default set of conditions used when none are specified.
@@ -700,6 +703,7 @@ impl FallbackChainBuilder {
     ///
     /// Triggers fallback on: `RateLimited`, `QuotaExceeded`, `NetworkError`,
     /// `Timeout`, `AuthError`.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, provider: impl LLMProvider + 'static) -> Self {
         self.add_arc(Arc::new(provider), FallbackTrigger::default_conditions())
     }

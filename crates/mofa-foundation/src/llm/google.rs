@@ -445,21 +445,13 @@ fn parse_gemini_sse(resp: reqwest::Response, model: String) -> ChatStream {
                     }
                     Ok(None) => {
                         // End of stream. If there is leftover data, try to parse it.
-                        if !buf.trim().is_empty() {
-                            if let Some(json_str) = buf.trim().strip_prefix("data: ") {
-                                if json_str.trim() != "[DONE]" {
-                                    if let Ok(chunk) =
-                                        serde_json::from_str::<GeminiStreamChunk>(json_str)
-                                    {
-                                        let completion =
-                                            gemini_chunk_to_completion(&chunk, &model, is_first);
-                                        return Some((
-                                            Ok(completion),
-                                            (resp, String::new(), model, false),
-                                        ));
-                                    }
-                                }
-                            }
+                        if !buf.trim().is_empty()
+                            && let Some(json_str) = buf.trim().strip_prefix("data: ")
+                            && json_str.trim() != "[DONE]"
+                            && let Ok(chunk) = serde_json::from_str::<GeminiStreamChunk>(json_str)
+                        {
+                            let completion = gemini_chunk_to_completion(&chunk, &model, is_first);
+                            return Some((Ok(completion), (resp, String::new(), model, false)));
                         }
                         return None;
                     }
