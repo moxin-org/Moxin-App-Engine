@@ -11,6 +11,7 @@ pub mod new;
 pub mod plugin;
 pub mod rag;
 pub mod run;
+pub mod test_dsl;
 pub mod session;
 pub mod swarm;
 pub mod tool;
