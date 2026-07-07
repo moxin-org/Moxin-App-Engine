@@ -96,7 +96,7 @@ impl RetryCondition {
                 let lower = error_message.to_lowercase();
                 patterns
                     .iter()
-                    .any(|p| lower.contains(&p.to_lowercase().as_str().to_owned()))
+                    .any(|p| lower.contains(p.to_lowercase().as_str()))
             }
         }
     }
