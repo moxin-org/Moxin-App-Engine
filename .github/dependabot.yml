@@ -33,4 +33,4 @@ updates:
     commit-message:
       prefix: "chore(ci):"
     labels:
-      - "ci"
+      - "dependencies"
