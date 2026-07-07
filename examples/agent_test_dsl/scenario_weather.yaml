@@ -1,0 +1,18 @@
+agent_id: customer_support_agent
+system_prompt: You are a helpful assistant
+tools:
+  - weather_search
+turns:
+  - user: What's the weather in Berlin?
+    expect:
+      - kind: call_tool_with
+        name: weather_search
+        arguments:
+          city: Berlin
+      - kind: respond_containing
+        text: temperature
+  - user: Thanks!
+    expect:
+      - kind: not_call_any_tool
+      - kind: respond_matching_regex
+        pattern: "(?i)welcome|happy to help"

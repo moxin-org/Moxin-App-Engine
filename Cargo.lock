@@ -6124,7 +6124,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]
