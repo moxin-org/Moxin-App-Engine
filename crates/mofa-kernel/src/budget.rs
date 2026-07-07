@@ -107,6 +107,52 @@ impl BudgetStatus {
         })
     }
 
+    /// Returns the daily cost usage as a ratio in `[0.0, ∞)`,
+    /// or `None` when no daily cost limit is configured.
+    pub fn daily_cost_usage_ratio(&self) -> Option<f64> {
+        self.config.max_cost_per_day.map(|max| {
+            if max > 0.0 {
+                self.daily_cost / max
+            } else {
+                1.0
+            }
+        })
+    }
+
+    /// Returns the remaining session token budget, clamped to 0,
+    /// or `None` when no session token limit is configured.
+    ///
+    /// This mirrors [`remaining_session_cost`] for the token dimension
+    /// (fixes the API gap reported in issue #1475).
+    pub fn remaining_session_tokens(&self) -> Option<u64> {
+        self.config
+            .max_tokens_per_session
+            .map(|max| max.saturating_sub(self.session_tokens))
+    }
+
+    /// Returns the remaining daily token budget, clamped to 0,
+    /// or `None` when no daily token limit is configured.
+    pub fn remaining_daily_tokens(&self) -> Option<u64> {
+        self.config
+            .max_tokens_per_day
+            .map(|max| max.saturating_sub(self.daily_tokens))
+    }
+
+    /// Returns the session token usage as a ratio in `[0.0, ∞)`,
+    /// or `None` when no session token limit is configured.
+    ///
+    /// A value ≥ 1.0 means the agent has reached or exceeded its session
+    /// token budget.
+    pub fn session_token_usage_ratio(&self) -> Option<f64> {
+        self.config.max_tokens_per_session.map(|max| {
+            if max > 0 {
+                self.session_tokens as f64 / max as f64
+            } else {
+                1.0
+            }
+        })
+    }
+
     pub fn is_exceeded(&self) -> bool {
         if let Some(max) = self.config.max_cost_per_session
             && self.session_cost >= max
@@ -230,5 +276,87 @@ mod tests {
                 .unwrap(),
         };
         assert!((status.remaining_session_cost().unwrap() - 7.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_budget_status_token_remaining_methods() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(100_000)
+            .and_then(|c| c.with_max_tokens_per_day(1_000_000))
+            .unwrap();
+
+        let status = BudgetStatus {
+            session_cost: 0.0,
+            daily_cost: 0.0,
+            session_tokens: 40_000,
+            daily_tokens: 300_000,
+            config,
+        };
+
+        // remaining_session_tokens: 100_000 - 40_000 = 60_000
+        assert_eq!(status.remaining_session_tokens(), Some(60_000));
+        // remaining_daily_tokens: 1_000_000 - 300_000 = 700_000
+        assert_eq!(status.remaining_daily_tokens(), Some(700_000));
+    }
+
+    #[test]
+    fn test_budget_status_token_usage_ratio() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(200_000)
+            .unwrap();
+
+        let status = BudgetStatus {
+            session_cost: 0.0,
+            daily_cost: 0.0,
+            session_tokens: 50_000,
+            daily_tokens: 0,
+            config,
+        };
+
+        // ratio = 50_000 / 200_000 = 0.25
+        let ratio = status.session_token_usage_ratio().unwrap();
+        assert!((ratio - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_budget_status_token_remaining_clamps_to_zero() {
+        let config = BudgetConfig::default()
+            .with_max_tokens_per_session(1_000)
+            .unwrap();
+
+        // Tokens already exceed budget
+        let status = BudgetStatus {
+            session_cost: 0.0,
+            daily_cost: 0.0,
+            session_tokens: 5_000,
+            daily_tokens: 0,
+            config,
+        };
+
+        // saturating_sub clamps to 0 (u64 cannot go negative)
+        assert_eq!(status.remaining_session_tokens(), Some(0));
+        // ratio > 1.0 — signals budget overrun
+        let ratio = status.session_token_usage_ratio().unwrap();
+        assert!(ratio > 1.0);
+    }
+
+    #[test]
+    fn test_budget_status_no_token_limits_returns_none() {
+        // No token limits configured → methods return None
+        let config = BudgetConfig::default()
+            .with_max_cost_per_session(10.0)
+            .unwrap();
+
+        let status = BudgetStatus {
+            session_cost: 5.0,
+            daily_cost: 0.0,
+            session_tokens: 99_999,
+            daily_tokens: 0,
+            config,
+        };
+
+        assert!(status.remaining_session_tokens().is_none());
+        assert!(status.remaining_daily_tokens().is_none());
+        assert!(status.session_token_usage_ratio().is_none());
     }
 }
