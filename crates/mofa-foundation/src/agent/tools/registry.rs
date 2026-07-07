@@ -256,8 +256,68 @@ impl ToolRegistry {
         self.plugin_loaders.insert(path.into(), Arc::new(loader));
     }
 
-    /// 热加载插件 (TODO: 实际插件系统实现)
-    /// Hot reload plugin
+    /// Hot reload a plugin and update its tools without restarting the agent
+    ///
+    /// This function dynamically reloads a plugin by:
+    /// 1. Locating the registered loader for the given plugin path
+    /// 2. Unregistering all tools currently loaded from that plugin
+    /// 3. Invoking the loader to fetch an updated list of tools
+    /// 4. Registering the new tools with their metadata
+    /// 5. Restoring the previous state if loading fails (rollback on error)
+    ///
+    /// This enables live updates to plugin tools without requiring an agent restart,
+    /// useful for development workflows and dynamic plugin updates in production.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The plugin path identifier that was previously registered via
+    ///   [`register_plugin_loader`](#method.register_plugin_loader). Must match
+    ///   exactly with the path used during registration.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<String>)` - A vector of tool names that were successfully reloaded.
+    ///   Empty vector if the plugin had no tools.
+    /// * `Err(AgentError::NotFound)` - If no plugin loader is registered for the given path.
+    /// * `Err(AgentError::RegistrationFailed)` - If a tool name conflicts with an existing
+    ///   tool from a different source, or if the loader returns duplicate tool names.
+    /// * `Err(AgentError::*)` - Other errors from the plugin loader function.
+    ///
+    /// # Error Handling & Rollback
+    ///
+    /// If loading fails at any point (registration error or loader error), the function
+    /// automatically restores the previous tool registry state to maintain consistency.
+    /// This ensures your agent continues functioning with the last-known-good tools.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Register a plugin loader
+    /// registry.register_plugin_loader("./plugins/calculator", |_path| {
+    ///     Ok(vec![
+    ///         Arc::new(AddTool),
+    ///         Arc::new(SubtractTool),
+    ///     ])
+    /// });
+    ///
+    /// // Later, reload the plugin after updating its implementation
+    /// match registry.hot_reload_plugin("./plugins/calculator").await {
+    ///     Ok(reloaded) => {
+    ///         println!("Reloaded tools: {:?}", reloaded);
+    ///         // Output: Reloaded tools: ["add", "subtract"]
+    ///     }
+    ///     Err(e) => eprintln!("Hot reload failed: {}", e),
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Does not panic. All errors are returned as `AgentResult`.
+    ///
+    /// # See Also
+    ///
+    /// - [`register_plugin_loader`](#method.register_plugin_loader) - Register a new plugin loader
+    /// - [`register`](#method.register) - Register individual tools
     pub async fn hot_reload_plugin(&mut self, path: &str) -> AgentResult<Vec<String>> {
         let loader = self.plugin_loaders.get(path).cloned().ok_or_else(|| {
             AgentError::NotFound(format!("Plugin loader not registered for path: {path}"))
