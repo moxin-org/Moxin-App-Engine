@@ -92,6 +92,11 @@ impl RemainingSteps {
     }
 }
 
+/// Default stream buffer size for serde deserialization
+fn default_stream_buffer_size() -> usize {
+    100
+}
+
 /// Graph execution configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphConfig<V = Value> {
@@ -113,6 +118,10 @@ pub struct GraphConfig<V = Value> {
     /// Maximum parallel branches
     pub max_parallelism: usize,
 
+    /// Stream channel buffer size (for `stream()` method)
+    #[serde(default = "default_stream_buffer_size")]
+    pub stream_buffer_size: usize,
+
     /// Custom configuration data
     #[serde(default)]
     pub custom: HashMap<String, V>,
@@ -127,6 +136,7 @@ impl<V: Clone> Default for GraphConfig<V> {
             checkpoint_interval: 10,
             timeout_ms: 0,
             max_parallelism: 10,
+            stream_buffer_size: 100,
             custom: HashMap::new(),
         }
     }
@@ -166,6 +176,12 @@ impl<V: Clone> GraphConfig<V> {
     /// Set maximum parallelism
     pub fn with_max_parallelism(mut self, max: usize) -> Self {
         self.max_parallelism = max;
+        self
+    }
+
+    /// Set stream channel buffer size
+    pub fn with_stream_buffer_size(mut self, size: usize) -> Self {
+        self.stream_buffer_size = if size == 0 { 1 } else { size };
         self
     }
 
@@ -358,6 +374,26 @@ mod tests {
         assert_eq!(config.checkpoint_interval, 5);
         assert_eq!(config.timeout_ms, 30000);
         assert_eq!(config.max_parallelism, 4);
+    }
+
+    #[test]
+    fn test_stream_buffer_size_default() {
+        let config = GraphConfig::<serde_json::Value>::default();
+        assert_eq!(config.stream_buffer_size, 100);
+    }
+
+    #[test]
+    fn test_stream_buffer_size_custom() {
+        let config = GraphConfig::<serde_json::Value>::new()
+            .with_stream_buffer_size(5);
+        assert_eq!(config.stream_buffer_size, 5);
+    }
+
+    #[test]
+    fn test_stream_buffer_size_zero_clamped_to_one() {
+        let config = GraphConfig::<serde_json::Value>::new()
+            .with_stream_buffer_size(0);
+        assert_eq!(config.stream_buffer_size, 1);
     }
 
     #[tokio::test]

@@ -702,7 +702,8 @@ impl<S: GraphState + 'static> CompiledGraph<S, serde_json::Value> for CompiledGr
         let semaphore = self.parallelism_semaphore.clone();
 
         // Create a channel for streaming events
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let buffer_size = self.config.stream_buffer_size;
+        let (tx, rx) = tokio::sync::mpsc::channel(buffer_size);
 
         // Spawn execution task
         let stream_span = tracing::info_span!("state_graph.stream");
