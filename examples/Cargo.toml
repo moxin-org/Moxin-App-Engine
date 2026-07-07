@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "agent_runner_basic",
+    "agent_runner_custom_session",
+    "agent_runner_tools",
     "cli_production_smoke",
     "cli_agent_logs_demo",
     "cli_plugin_lifecycle",
