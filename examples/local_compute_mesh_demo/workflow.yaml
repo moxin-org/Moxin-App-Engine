@@ -1,0 +1,42 @@
+# MoFA Compute Mesh Workflow Configuration
+# This file configures the compute mesh for streaming inference with LocalFirstWithCloudFallback
+
+version: "1.0"
+
+compute_mesh:
+  # Local compute node configuration
+  local:
+    enabled: true
+    memory_capacity_mb: 16384
+    models:
+      - id: "qwen-7b-chat"
+        memory_required_mb: 7000
+      - id: "deepseek-coder-6.7b"
+        memory_required_mb: 6700
+      - id: "llama-3-8b"
+        memory_required_mb: 8000
+
+  # Cloud fallback configuration
+  cloud:
+    enabled: true
+    providers:
+      - name: "openai"
+        models:
+          - "gpt-4-turbo"
+          - "gpt-3.5-turbo"
+      - name: "anthropic"
+        models:
+          - "claude-3-opus"
+          - "claude-3-sonnet"
+
+# Routing policy configuration
+routing:
+  policy: "LocalFirstWithCloudFallback"
+  defer_threshold: 0.75
+  reject_threshold: 0.90
+
+# Streaming configuration
+streaming:
+  enabled: true
+  buffer_size: 1024
+  timeout_ms: 30000
