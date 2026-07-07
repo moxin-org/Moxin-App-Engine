@@ -20,6 +20,7 @@ use mofa_kernel::workflow::telemetry::{DebugEvent, TelemetryEmitter};
 use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
 use tracing::{error, info, warn};
@@ -80,7 +81,9 @@ pub struct WorkflowExecutor {
     sub_workflows: Arc<RwLock<HashMap<String, Arc<WorkflowGraph>>>>,
     /// 外部事件等待器
     /// External event waiters
-    event_waiters: Arc<RwLock<HashMap<String, Vec<oneshot::Sender<WorkflowValue>>>>>,
+    event_waiters: Arc<RwLock<HashMap<String, Vec<(u64, oneshot::Sender<WorkflowValue>)>>>>,
+    /// Monotonic waiter identifier for targeted cleanup on timeout/cancellation.
+    next_waiter_id: AtomicU64,
     /// 并行执行信号量
     /// Parallel execution semaphore
     semaphore: Arc<Semaphore>,
@@ -99,6 +102,7 @@ impl WorkflowExecutor {
             telemetry: None,
             sub_workflows: Arc::new(RwLock::new(HashMap::new())),
             event_waiters: Arc::new(RwLock::new(HashMap::new())),
+            next_waiter_id: AtomicU64::new(1),
             semaphore,
             profiler: ProfilerMode::Disabled,
             review_handler: None,
@@ -248,8 +252,19 @@ impl WorkflowExecutor {
     pub async fn send_external_event(&self, event_type: &str, data: WorkflowValue) {
         let mut waiters = self.event_waiters.write().await;
         if let Some(senders) = waiters.remove(event_type) {
-            for sender in senders {
+            for (_, sender) in senders {
                 let _ = sender.send(data.clone());
+            }
+        }
+    }
+
+    /// Remove a single waiter from an event bucket.
+    async fn remove_waiter(&self, event_type: &str, waiter_id: u64) {
+        let mut waiters = self.event_waiters.write().await;
+        if let Some(senders) = waiters.get_mut(event_type) {
+            senders.retain(|(id, _)| *id != waiter_id);
+            if senders.is_empty() {
+                waiters.remove(event_type);
             }
         }
     }
@@ -1284,22 +1299,39 @@ impl WorkflowExecutor {
         // 创建等待通道
         // Create waiting channel
         let (tx, rx) = oneshot::channel();
+        let waiter_id = self.next_waiter_id.fetch_add(1, Ordering::Relaxed);
 
         {
             let mut waiters = self.event_waiters.write().await;
-            waiters.entry(event_type.to_string()).or_default().push(tx);
+            waiters
+                .entry(event_type.to_string())
+                .or_default()
+                .push((waiter_id, tx));
         }
 
         // 等待事件或超时
         // Wait for event or timeout
         let timeout = node.config.timeout.execution_timeout_ms;
         let result = if timeout > 0 {
-            tokio::time::timeout(std::time::Duration::from_millis(timeout), rx)
-                .await
-                .map_err(|_| "Wait timeout".to_string())?
-                .map_err(|_| "Wait cancelled".to_string())?
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout), rx).await {
+                Ok(Ok(value)) => value,
+                Ok(Err(_)) => {
+                    self.remove_waiter(event_type, waiter_id).await;
+                    return Err("Wait cancelled".to_string());
+                }
+                Err(_) => {
+                    self.remove_waiter(event_type, waiter_id).await;
+                    return Err("Wait timeout".to_string());
+                }
+            }
         } else {
-            rx.await.map_err(|_| "Wait cancelled".to_string())?
+            match rx.await {
+                Ok(value) => value,
+                Err(_) => {
+                    self.remove_waiter(event_type, waiter_id).await;
+                    return Err("Wait cancelled".to_string());
+                }
+            }
         };
 
         ctx.set_node_output(node.id(), result.clone()).await;
@@ -1509,6 +1541,7 @@ impl WorkflowExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tokio::time::{Duration, Instant, sleep};
 
     #[tokio::test]
@@ -1955,6 +1988,58 @@ mod tests {
             .await
             .expect("Should complete without timeout");
         assert!(matches!(result.status, WorkflowStatus::Completed));
+    }
+
+    #[tokio::test]
+    async fn test_wait_timeout_cleans_up_stale_waiter() {
+        let executor = WorkflowExecutor::new(ExecutorConfig::default());
+        let ctx = WorkflowContext::new("wait_timeout_cleanup_wf");
+        let wait_node = WorkflowNode::wait("wait", "Wait", "never_happens").with_timeout(20);
+
+        let result = executor
+            .execute_wait(&ctx, &wait_node, WorkflowValue::Null)
+            .await;
+        assert!(matches!(result, Err(msg) if msg == "Wait timeout"));
+
+        let waiters = executor.event_waiters.read().await;
+        assert!(
+            !waiters.contains_key("never_happens"),
+            "timed-out waiter entry should be removed from event_waiters"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wait_cancel_cleans_up_stale_waiter() {
+        let executor = Arc::new(WorkflowExecutor::new(ExecutorConfig::default()));
+        let ctx = WorkflowContext::new("wait_cancel_cleanup_wf");
+        let wait_node = WorkflowNode::wait("wait", "Wait", "cancel_event").with_timeout(0);
+
+        let exec_task = {
+            let executor = Arc::clone(&executor);
+            tokio::spawn(async move {
+                executor
+                    .execute_wait(&ctx, &wait_node, WorkflowValue::Null)
+                    .await
+            })
+        };
+
+        // Ensure execute_wait has time to register the waiter.
+        sleep(Duration::from_millis(20)).await;
+
+        // Remove and drop the waiter sender to force receiver cancellation.
+        {
+            let mut waiters = executor.event_waiters.write().await;
+            waiters.remove("cancel_event");
+        }
+
+        let result = exec_task.await.expect("wait task should not panic");
+        assert!(matches!(result, Err(msg) if msg == "Wait cancelled"));
+
+        let waiters = executor.event_waiters.read().await;
+        assert!(
+            !waiters.contains_key("cancel_event"),
+            "cancelled waiter entry should be removed from event_waiters"
+        );
     }
 
     // -------------------------------------------------------------------------
