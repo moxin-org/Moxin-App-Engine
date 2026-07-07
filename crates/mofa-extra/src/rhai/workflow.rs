@@ -19,6 +19,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Global safety cap for scripted-node retry backoff.
+const MAX_SCRIPT_NODE_BACKOFF_MS: u64 = 60_000;
+
+/// Compute exponential retry delay for scripted workflow nodes.
+///
+/// Uses checked arithmetic to prevent overflow when `retry_count` is large.
+/// On overflow, clamps to `MAX_SCRIPT_NODE_BACKOFF_MS` instead of wrapping
+/// to zero and creating a retry storm.
+fn script_node_retry_delay_ms(retry_count: u32) -> u64 {
+    let delay = 100u64
+        .checked_mul(2u64.checked_pow(retry_count).unwrap_or(u64::MAX))
+        .unwrap_or(MAX_SCRIPT_NODE_BACKOFF_MS);
+    delay.min(MAX_SCRIPT_NODE_BACKOFF_MS)
+}
+
 // ============================================================================
 // 脚本节点定义
 // Script node definition
@@ -274,7 +289,7 @@ impl ScriptWorkflowNode {
             if retry_count < self.config.max_retries {
                 // 指数退避重试
                 // Exponential backoff retry
-                let delay = std::time::Duration::from_millis(100 * 2u64.pow(retry_count));
+                let delay = std::time::Duration::from_millis(script_node_retry_delay_ms(retry_count));
                 tokio::time::sleep(delay).await;
             }
             retry_count += 1;
@@ -900,6 +915,20 @@ mod tests {
         let result = executor.execute(serde_json::json!(5)).await.unwrap();
         // 5 * 2 = 10, 10 + 10 = 20
         assert_eq!(result, serde_json::json!(20));
+    }
+
+    #[test]
+    fn test_script_node_retry_delay_large_count_is_capped() {
+        assert_eq!(script_node_retry_delay_ms(0), 100);
+        assert_eq!(script_node_retry_delay_ms(1), 200);
+        // 100 * 2^10 = 102400, capped at 60_000
+        assert_eq!(script_node_retry_delay_ms(10), 60_000);
+
+        // Previously these overflowed and wrapped to 0 in release builds,
+        // causing unthrottled retry storms.
+        for &count in &[55u32, 63, 64, 65, 1000, u32::MAX] {
+            assert_eq!(script_node_retry_delay_ms(count), 60_000);
+        }
     }
 
     #[tokio::test]
