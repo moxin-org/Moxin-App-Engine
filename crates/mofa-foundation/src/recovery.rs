@@ -88,7 +88,7 @@ impl Backoff {
                 initial_ms,
                 increment_ms,
             } => {
-                let ms = initial_ms + (increment_ms * attempt as u64);
+                let ms = initial_ms.saturating_add(increment_ms.saturating_mul(attempt as u64));
                 Duration::from_millis(ms)
             }
             Self::Exponential { initial_ms, max_ms } => {
@@ -497,6 +497,12 @@ mod tests {
         assert_eq!(b.delay_for(0), Duration::from_millis(100));
         assert_eq!(b.delay_for(1), Duration::from_millis(300));
         assert_eq!(b.delay_for(2), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_backoff_linear_saturates_on_overflow() {
+        let b = Backoff::linear(u64::MAX - 5, 10);
+        assert_eq!(b.delay_for(u32::MAX), Duration::from_millis(u64::MAX));
     }
 
     #[test]
