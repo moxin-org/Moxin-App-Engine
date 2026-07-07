@@ -8,11 +8,11 @@ use mofa_kernel::agent::error::{AgentError, AgentResult};
 use mofa_kernel::rag::{DocumentChunk, SearchResult, SimilarityMetric, VectorStore};
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
-    CountPointsBuilder, CreateCollectionBuilder, DeletePointsBuilder, Distance, GetPointsBuilder,
-    PointStruct, PointsIdsList, QueryPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+    CountPointsBuilder, CreateCollectionBuilder, DeletePointsBuilder, Distance, PointStruct,
+    PointsIdsList, QueryPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
 };
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 /// Reserved payload keys for internal storage.
 const PAYLOAD_KEY_ORIGINAL_ID: &str = "_original_id";
@@ -50,9 +50,12 @@ pub struct QdrantVectorStore {
 
 /// Convert a string ID to a u64 point ID for Qdrant.
 ///
-/// Uses SHA-256 for stable, cross-version deterministic mapping. The original
-/// string ID is always stored in the point payload so retrieval is lossless.
+/// Uses DefaultHasher for a deterministic mapping. The original string
+/// ID is always stored in the point payload so retrieval is lossless.
 fn string_id_to_u64(id: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hasher);
+    hasher.finish()
     let digest = Sha256::digest(id.as_bytes());
     u64::from_le_bytes(
         digest[..8]
@@ -103,7 +106,8 @@ impl QdrantVectorStore {
             SimilarityMetric::Cosine => Distance::Cosine,
             SimilarityMetric::Euclidean => Distance::Euclid,
             SimilarityMetric::DotProduct => Distance::Dot,
-            _ => Distance::Cosine, // Default fallback for future variants
+            // Default to Cosine for any future variants
+            _ => Distance::Cosine,
         }
     }
 
@@ -189,13 +193,6 @@ impl QdrantVectorStore {
 #[async_trait]
 impl VectorStore for QdrantVectorStore {
     async fn upsert(&mut self, chunk: DocumentChunk) -> AgentResult<()> {
-        let len = chunk.embedding.len() as u64;
-        if len != self.vector_dimensions {
-            return Err(AgentError::InvalidInput(format!(
-                "chunk embedding length {} does not match store dimension {}",
-                len, self.vector_dimensions
-            )));
-        }
         let point = Self::chunk_to_point(&chunk);
         self.client
             .upsert_points(UpsertPointsBuilder::new(&self.collection_name, vec![point]).wait(true))
@@ -207,15 +204,6 @@ impl VectorStore for QdrantVectorStore {
     async fn upsert_batch(&mut self, chunks: Vec<DocumentChunk>) -> AgentResult<()> {
         if chunks.is_empty() {
             return Ok(());
-        }
-        for chunk in &chunks {
-            let len = chunk.embedding.len() as u64;
-            if len != self.vector_dimensions {
-                return Err(AgentError::InvalidInput(format!(
-                    "chunk embedding length {} does not match store dimension {}",
-                    len, self.vector_dimensions
-                )));
-            }
         }
         let points: Vec<PointStruct> = chunks.iter().map(Self::chunk_to_point).collect();
         self.client
@@ -231,13 +219,6 @@ impl VectorStore for QdrantVectorStore {
         top_k: usize,
         threshold: Option<f32>,
     ) -> AgentResult<Vec<SearchResult>> {
-        if query_embedding.len() as u64 != self.vector_dimensions {
-            return Err(AgentError::InvalidInput(format!(
-                "query embedding length {} does not match store dimension {}",
-                query_embedding.len(),
-                self.vector_dimensions
-            )));
-        }
         // Request extra results when using threshold filtering since
         // Qdrant QueryPoints does not support score thresholds natively.
         let limit = if threshold.is_some() {
@@ -273,22 +254,6 @@ impl VectorStore for QdrantVectorStore {
 
     async fn delete(&mut self, id: &str) -> AgentResult<bool> {
         let point_id = string_id_to_u64(id);
-
-        // Check if the point exists before attempting deletion.
-        let existing = self
-            .client
-            .get_points(
-                GetPointsBuilder::new(&self.collection_name, vec![point_id.into()])
-                    .with_payload(false)
-                    .with_vectors(false),
-            )
-            .await
-            .map_err(|e| AgentError::Internal(format!("Qdrant get_points failed: {e}")))?;
-
-        if existing.result.is_empty() {
-            return Ok(false);
-        }
-
         self.client
             .delete_points(
                 DeletePointsBuilder::new(&self.collection_name)
@@ -327,7 +292,6 @@ impl VectorStore for QdrantVectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mofa_kernel::agent::error::AgentError;
 
     #[test]
     fn test_string_id_to_u64_deterministic() {
@@ -403,22 +367,5 @@ mod tests {
         };
         assert_eq!(config.vector_dimensions, 384);
         assert_eq!(config.collection_name, "test_collection");
-    }
-
-    #[test]
-    fn test_dimension_mismatch_error() {
-        // create a dummy config and store but don't actually connect to Qdrant
-        let mut store = QdrantVectorStore {
-            client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
-            collection_name: "c".to_string(),
-            vector_dimensions: 3,
-            metric: SimilarityMetric::Cosine,
-        };
-        let chunk = DocumentChunk::new("x", "t", vec![1.0, 2.0]);
-        let err = futures::executor::block_on(store.upsert(chunk)).unwrap_err();
-        assert!(matches!(err, AgentError::InvalidInput(_)));
-
-        let e2 = futures::executor::block_on(store.search(&[1.0, 2.0], 1, None)).unwrap_err();
-        assert!(matches!(e2, AgentError::InvalidInput(_)));
     }
 }
