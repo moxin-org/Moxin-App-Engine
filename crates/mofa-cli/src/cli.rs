@@ -636,6 +636,22 @@ pub enum RagCommands {
         /// Qdrant collection name.
         #[arg(long, default_value = "mofa_documents")]
         qdrant_collection: String,
+
+        /// Embedding provider to use (`deterministic`, `openai`, `ollama`).
+        #[arg(long, default_value = "deterministic")]
+        embedding_provider: String,
+
+        /// API base URL for the embedding provider.
+        #[arg(long)]
+        embedding_api_base: Option<String>,
+
+        /// API key for the embedding provider.
+        #[arg(long)]
+        embedding_api_key: Option<String>,
+
+        /// Model to use for the embedding provider.
+        #[arg(long)]
+        embedding_model: Option<String>,
     },
 
     /// Query indexed documents from a RAG backend.
@@ -674,6 +690,22 @@ pub enum RagCommands {
         /// Qdrant collection name.
         #[arg(long, default_value = "mofa_documents")]
         qdrant_collection: String,
+
+        /// Embedding provider to use (`deterministic`, `openai`, `ollama`).
+        #[arg(long, default_value = "deterministic")]
+        embedding_provider: String,
+
+        /// API base URL for the embedding provider.
+        #[arg(long)]
+        embedding_api_base: Option<String>,
+
+        /// API key for the embedding provider.
+        #[arg(long)]
+        embedding_api_key: Option<String>,
+
+        /// Model to use for the embedding provider.
+        #[arg(long)]
+        embedding_model: Option<String>,
     },
 }
 

@@ -6,13 +6,77 @@ use mofa_foundation::rag::InMemoryVectorStore;
 use mofa_foundation::rag::{QdrantConfig, QdrantVectorStore};
 use mofa_kernel::rag::{Document, DocumentChunk, SearchResult, SimilarityMetric, VectorStore};
 use mofa_runtime::rag::{
-    ChunkingStrategy, DeterministicEmbeddingProvider, RagIngestionConfig, index_documents,
-    merge_chunks, query_store,
+    ChunkingStrategy, DeterministicEmbeddingProvider, LLMEmbeddingProvider, RagIngestionConfig, index_documents,
+    merge_chunks, query_store, EmbeddingProvider
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use mofa_foundation::llm::{LLMClient, openai::{OpenAIProvider, OpenAIConfig}, ollama::{OllamaProvider, OllamaConfig}};
+
+enum CliEmbeddingProvider {
+    Deterministic(DeterministicEmbeddingProvider),
+    Llm(LLMEmbeddingProvider),
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for CliEmbeddingProvider {
+    async fn embed(&self, inputs: &[String]) -> mofa_kernel::agent::types::error::GlobalResult<Vec<Vec<f32>>> {
+        match self {
+            Self::Deterministic(p) => p.embed(inputs).await,
+            Self::Llm(p) => p.embed(inputs).await,
+        }
+    }
+
+    fn dimensions(&self) -> usize {
+        match self {
+            Self::Deterministic(p) => p.dimensions(),
+            Self::Llm(p) => p.dimensions(),
+        }
+    }
+}
+
+fn build_embedder(
+    provider: &str,
+    dimensions: usize,
+    api_base: Option<&str>,
+    api_key: Option<&str>,
+    model: Option<&str>,
+) -> Result<CliEmbeddingProvider, CliError> {
+    match provider {
+        "openai" => {
+            let key = api_key.unwrap_or_default();
+            let model_name = model.unwrap_or("text-embedding-ada-002");
+            let mut ocfg = OpenAIConfig::new(key).with_model(model_name);
+            if let Some(base) = api_base {
+                ocfg = ocfg.with_base_url(base);
+            }
+            let provider_impl = OpenAIProvider::with_config(ocfg);
+            let client = LLMClient::new(Arc::new(provider_impl));
+            let embedder = LLMEmbeddingProvider::new(Arc::new(client), dimensions)
+                .map_err(map_global_error)?;
+            Ok(CliEmbeddingProvider::Llm(embedder))
+        }
+        "ollama" => {
+            let model_name = model.unwrap_or("nomic-embed-text");
+            let mut ocfg = OllamaConfig::new().with_model(model_name);
+            if let Some(base) = api_base {
+                ocfg = ocfg.with_base_url(base);
+            }
+            let provider_impl = OllamaProvider::with_config(ocfg);
+            let client = LLMClient::new(Arc::new(provider_impl));
+            let embedder = LLMEmbeddingProvider::new(Arc::new(client), dimensions)
+                .map_err(map_global_error)?;
+            Ok(CliEmbeddingProvider::Llm(embedder))
+        }
+        _ => {
+            let embedder = DeterministicEmbeddingProvider::new(dimensions).map_err(map_global_error)?;
+            Ok(CliEmbeddingProvider::Deterministic(embedder))
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct LocalRagIndex {
@@ -32,13 +96,17 @@ pub async fn run_index(
     qdrant_url: Option<&str>,
     qdrant_api_key: Option<&str>,
     qdrant_collection: &str,
+    embedding_provider: &str,
+    embedding_api_base: Option<&str>,
+    embedding_api_key: Option<&str>,
+    embedding_model: Option<&str>,
 ) -> Result<(), CliError> {
     let documents = load_documents(&input)?;
     if documents.is_empty() {
         return Err(CliError::Other("no input documents supplied".to_string()));
     }
 
-    let embedder = DeterministicEmbeddingProvider::new(dimensions).map_err(map_global_error)?;
+    let embedder = build_embedder(embedding_provider, dimensions, embedding_api_base, embedding_api_key, embedding_model)?;
     let ingestion = RagIngestionConfig {
         chunk_size,
         chunk_overlap,
@@ -124,6 +192,10 @@ pub async fn run_query(
     qdrant_url: Option<&str>,
     qdrant_api_key: Option<&str>,
     qdrant_collection: &str,
+    embedding_provider: &str,
+    embedding_api_base: Option<&str>,
+    embedding_api_key: Option<&str>,
+    embedding_model: Option<&str>,
 ) -> Result<(), CliError> {
     let results = match backend {
         "in-memory" => {
@@ -141,15 +213,13 @@ pub async fn run_query(
                 .await
                 .map_err(map_agent_error)?;
 
-            let embedder =
-                DeterministicEmbeddingProvider::new(index.dimensions).map_err(map_global_error)?;
+            let embedder = build_embedder(embedding_provider, index.dimensions, embedding_api_base, embedding_api_key, embedding_model)?;
             query_store(&store, &embedder, query, top_k, threshold)
                 .await
                 .map_err(map_global_error)?
         }
         "qdrant" => {
-            let embedder =
-                DeterministicEmbeddingProvider::new(dimensions).map_err(map_global_error)?;
+            let embedder = build_embedder(embedding_provider, dimensions, embedding_api_base, embedding_api_key, embedding_model)?;
             query_qdrant(
                 query,
                 &embedder,
@@ -178,7 +248,7 @@ pub async fn run_query(
 #[allow(clippy::too_many_arguments)]
 async fn index_qdrant(
     documents: &[Document],
-    embedder: &DeterministicEmbeddingProvider,
+    embedder: &CliEmbeddingProvider,
     ingestion: &RagIngestionConfig,
     dimensions: usize,
     qdrant_url: Option<&str>,
@@ -208,7 +278,7 @@ async fn index_qdrant(
 #[allow(clippy::too_many_arguments)]
 async fn index_qdrant(
     _documents: &[Document],
-    _embedder: &DeterministicEmbeddingProvider,
+    _embedder: &CliEmbeddingProvider,
     _ingestion: &RagIngestionConfig,
     _dimensions: usize,
     _qdrant_url: Option<&str>,
@@ -224,7 +294,7 @@ async fn index_qdrant(
 #[allow(clippy::too_many_arguments)]
 async fn query_qdrant(
     query: &str,
-    embedder: &DeterministicEmbeddingProvider,
+    embedder: &CliEmbeddingProvider,
     top_k: usize,
     threshold: Option<f32>,
     dimensions: usize,
@@ -254,7 +324,7 @@ async fn query_qdrant(
 #[allow(clippy::too_many_arguments)]
 async fn query_qdrant(
     _query: &str,
-    _embedder: &DeterministicEmbeddingProvider,
+    _embedder: &CliEmbeddingProvider,
     _top_k: usize,
     _threshold: Option<f32>,
     _dimensions: usize,
@@ -370,6 +440,10 @@ mod tests {
             None,
             None,
             "unused",
+            "deterministic",
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -385,6 +459,10 @@ mod tests {
             None,
             None,
             "unused",
+            "deterministic",
+            None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -405,6 +483,10 @@ mod tests {
             None,
             None,
             "unused",
+            "deterministic",
+            None,
+            None,
+            None,
         )
         .await
         .unwrap_err();

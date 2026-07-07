@@ -348,6 +348,10 @@ async fn run_command(cli: Cli) -> CliResult<()> {
                 qdrant_url,
                 qdrant_api_key,
                 qdrant_collection,
+                embedding_provider,
+                embedding_api_base,
+                embedding_api_key,
+                embedding_model,
             } => {
                 commands::rag::run_index(
                     input,
@@ -360,6 +364,10 @@ async fn run_command(cli: Cli) -> CliResult<()> {
                     qdrant_url.as_deref(),
                     qdrant_api_key.as_deref(),
                     &qdrant_collection,
+                    &embedding_provider,
+                    embedding_api_base.as_deref(),
+                    embedding_api_key.as_deref(),
+                    embedding_model.as_deref(),
                 )
                 .await?;
             }
@@ -373,6 +381,10 @@ async fn run_command(cli: Cli) -> CliResult<()> {
                 qdrant_url,
                 qdrant_api_key,
                 qdrant_collection,
+                embedding_provider,
+                embedding_api_base,
+                embedding_api_key,
+                embedding_model,
             } => {
                 commands::rag::run_query(
                     &query,
@@ -384,6 +396,10 @@ async fn run_command(cli: Cli) -> CliResult<()> {
                     qdrant_url.as_deref(),
                     qdrant_api_key.as_deref(),
                     &qdrant_collection,
+                    &embedding_provider,
+                    embedding_api_base.as_deref(),
+                    embedding_api_key.as_deref(),
+                    embedding_model.as_deref(),
                 )
                 .await?;
             }

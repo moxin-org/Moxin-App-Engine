@@ -63,6 +63,67 @@ impl EmbeddingProvider for DeterministicEmbeddingProvider {
     }
 }
 
+/// LLM-based embedding provider that connects to standard LLM clients (OpenAI, Ollama, etc.).
+pub struct LLMEmbeddingProvider {
+    client: std::sync::Arc<mofa_foundation::llm::LLMClient>,
+    dimensions: usize,
+}
+
+impl std::fmt::Debug for LLMEmbeddingProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LLMEmbeddingProvider")
+            .field("dimensions", &self.dimensions)
+            .finish()
+    }
+}
+
+impl Clone for LLMEmbeddingProvider {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            dimensions: self.dimensions,
+        }
+    }
+}
+
+impl LLMEmbeddingProvider {
+    /// Creates a new LLM-based embedder with the given dimensions and underlying client.
+    pub fn new(client: std::sync::Arc<mofa_foundation::llm::LLMClient>, dimensions: usize) -> GlobalResult<Self> {
+        if dimensions == 0 {
+            return Err(GlobalError::Runtime(
+                "embedding dimensions must be greater than 0".to_string(),
+            ));
+        }
+        Ok(Self { client, dimensions })
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for LLMEmbeddingProvider {
+    async fn embed(&self, inputs: &[String]) -> GlobalResult<Vec<Vec<f32>>> {
+        let texts = inputs.to_vec();
+        let embeddings = self.client.embed_batch(texts).await.map_err(|e| {
+            GlobalError::Runtime(format!("failed to generate embeddings: {}", e))
+        })?;
+        
+        if let Some(first) = embeddings.first() {
+            if first.len() != self.dimensions {
+                return Err(GlobalError::Runtime(format!(
+                    "embedding dimension mismatch from provider: expected {}, got {}",
+                    self.dimensions,
+                    first.len()
+                )));
+            }
+        }
+        
+        Ok(embeddings)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
 /// Chunking strategy used during document ingestion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkingStrategy {
@@ -490,5 +551,71 @@ mod tests {
         let merged = merge_chunks(vec![old], vec![new]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].text, "new");
+    }
+
+    struct DummyLLMProvider {
+        dimensions: usize,
+    }
+
+    #[async_trait]
+    impl mofa_foundation::llm::LLMProvider for DummyLLMProvider {
+        fn name(&self) -> &str {
+            "dummy"
+        }
+
+        async fn chat(
+            &self,
+            _req: mofa_foundation::llm::ChatCompletionRequest,
+        ) -> mofa_foundation::llm::LLMResult<mofa_foundation::llm::ChatCompletionResponse> {
+            unimplemented!()
+        }
+
+        async fn embedding(
+            &self,
+            request: mofa_foundation::llm::EmbeddingRequest,
+        ) -> mofa_foundation::llm::LLMResult<mofa_foundation::llm::EmbeddingResponse> {
+            let num_inputs = match request.input {
+                mofa_foundation::llm::EmbeddingInput::Single(_) => 1,
+                mofa_foundation::llm::EmbeddingInput::Multiple(ref v) => v.len(),
+            };
+
+            let mut data = Vec::new();
+            for i in 0..num_inputs {
+                data.push(mofa_foundation::llm::EmbeddingData {
+                    object: "embedding".to_string(),
+                    index: i as u32,
+                    embedding: vec![0.5; self.dimensions],
+                });
+            }
+
+            Ok(mofa_foundation::llm::EmbeddingResponse {
+                object: "list".to_string(),
+                model: "dummy-embed".to_string(),
+                data,
+                usage: mofa_foundation::llm::EmbeddingUsage {
+                    prompt_tokens: 10,
+                    total_tokens: 10,
+                },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_llm_embedding_provider() {
+        let provider = std::sync::Arc::new(DummyLLMProvider { dimensions: 4 });
+        let client = std::sync::Arc::new(mofa_foundation::llm::LLMClient::new(provider));
+
+        // Test valid dimensional match
+        let embedder = LLMEmbeddingProvider::new(client.clone(), 4).unwrap();
+        assert_eq!(embedder.dimensions(), 4);
+
+        let result = embedder.embed(&["hello".to_string()]).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), 4);
+
+        // Test mismatch dimensionality handling
+        let embedder2 = LLMEmbeddingProvider::new(client.clone(), 5).unwrap();
+        let err = embedder2.embed(&["world".to_string()]).await.unwrap_err();
+        assert!(err.to_string().contains("dimension mismatch"));
     }
 }
