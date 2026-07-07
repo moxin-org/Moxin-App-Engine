@@ -81,7 +81,8 @@ impl RecursiveChunker {
             return vec![];
         }
 
-        if text.chars().count() <= self.config.chunk_size {
+        let char_count = text.chars().count();
+        if char_count <= self.config.chunk_size {
             return vec![text.to_string()];
         }
 
@@ -89,7 +90,8 @@ impl RecursiveChunker {
     }
 
     fn recursive_split(&self, text: &str, separator_idx: usize) -> Vec<String> {
-        if text.chars().count() <= self.config.chunk_size {
+        let text_char_count = text.chars().count();
+        if text_char_count <= self.config.chunk_size {
             return vec![text.to_string()];
         }
 
@@ -99,6 +101,7 @@ impl RecursiveChunker {
         }
 
         let separator = &self.config.separators[separator_idx];
+        let sep_char_count = separator.chars().count();
         let parts: Vec<&str> = text.split(separator.as_str()).collect();
 
         // If the separator didn't actually split anything useful, try next
@@ -108,16 +111,24 @@ impl RecursiveChunker {
 
         let mut chunks = Vec::new();
         let mut current = String::new();
+        let mut current_char_count: usize = 0;
 
         for (i, part) in parts.iter().enumerate() {
-            let candidate = if current.is_empty() {
-                part.to_string()
+            let part_char_count = part.chars().count();
+            let candidate_char_count = if current.is_empty() {
+                part_char_count
             } else {
-                format!("{current}{separator}{part}")
+                current_char_count + sep_char_count + part_char_count
             };
 
-            if candidate.chars().count() <= self.config.chunk_size {
-                current = candidate;
+            if candidate_char_count <= self.config.chunk_size {
+                if current.is_empty() {
+                    current = part.to_string();
+                } else {
+                    current.push_str(separator);
+                    current.push_str(part);
+                }
+                current_char_count = candidate_char_count;
             } else {
                 // Save current chunk
                 if !current.is_empty() {
@@ -125,24 +136,29 @@ impl RecursiveChunker {
                 }
 
                 // If this single part is still too large, recurse with next separator
-                if part.chars().count() > self.config.chunk_size {
+                if part_char_count > self.config.chunk_size {
                     let sub_chunks = self.recursive_split(part, separator_idx + 1);
                     chunks.extend(sub_chunks);
                     current = String::new();
+                    current_char_count = 0;
                 } else {
                     current = part.to_string();
+                    current_char_count = part_char_count;
                 }
             }
 
             // Add overlap from the end of the previous chunk (UTF-8 safe)
             if i > 0 && current.is_empty() && !chunks.is_empty() {
                 let last = chunks.last().unwrap();
-                let char_count = last.chars().count();
-                let overlap_chars = char_count.min(self.config.chunk_overlap);
-                let overlap_text: String = last.chars().skip(char_count - overlap_chars).collect();
+                let last_chars: Vec<char> = last.chars().collect();
+                let overlap_chars = last_chars.len().min(self.config.chunk_overlap);
+                let overlap_text: String =
+                    last_chars[last_chars.len() - overlap_chars..].iter().collect();
+                let overlap_len = overlap_text.chars().count();
                 // Only use overlap if it doesn't make next chunk too large
-                if overlap_text.chars().count() < self.config.chunk_size / 2 {
+                if overlap_len < self.config.chunk_size / 2 {
                     current = overlap_text;
+                    current_char_count = overlap_len;
                 }
             }
         }
@@ -284,5 +300,39 @@ mod tests {
         assert_eq!(config.chunk_size, 1000);
         assert_eq!(config.chunk_overlap, 200);
         assert_eq!(config.separators.len(), 5);
+    }
+
+    #[test]
+    fn multibyte_utf8_chunking() {
+        // Each CJK character is 3 bytes in UTF-8 but 1 char — ensures we
+        // measure chunk_size in characters, not bytes.
+        let config = RecursiveChunkConfig::new(10, 0);
+        let chunker = RecursiveChunker::new(config);
+        let text = "你好世界测试文本。这是第二句话。还有第三句话在这里。";
+        let chunks = chunker.chunk(text);
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            assert!(
+                chunk.chars().count() <= 12, // small margin for separator handling
+                "Chunk has {} chars, expected <= 12",
+                chunk.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn overlap_with_large_text() {
+        let config = RecursiveChunkConfig::new(50, 10);
+        let chunker = RecursiveChunker::new(config);
+        let text = "First paragraph with content.\n\nSecond paragraph with content.\n\nThird paragraph with more content here.";
+        let chunks = chunker.chunk(text);
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            assert!(
+                chunk.chars().count() <= 60,
+                "Chunk too large: {} chars",
+                chunk.chars().count()
+            );
+        }
     }
 }
