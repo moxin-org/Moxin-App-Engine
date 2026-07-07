@@ -13,20 +13,48 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
+/// Determines which spans are recorded and exported to the backend.
+///
+/// Choose a strategy based on your traffic volume and observability needs:
+///
+/// | Strategy | Best for |
+/// |---|---|
+/// | `AlwaysOn` | Development, low-traffic services |
+/// | `AlwaysOff` | Temporarily disabling tracing without code changes |
+/// | `Probabilistic` | High-traffic production (e.g. 0.01 = 1%) |
+/// | `RateLimiting` | Bursty traffic with a hard cap per second |
+/// | `ParentBased` | Microservices — inherit the sampling decision from the caller |
+///
 /// 采样策略
 /// Sampling strategy
 #[derive(Debug, Clone, Default)]
 pub enum SamplingStrategy {
+    /// Record every span. Use during development or for low-traffic services
+    /// where 100% visibility is acceptable.
+    ///
     /// 始终采样
     /// Always sample
     #[default]
     AlwaysOn,
+    /// Record no spans. Useful for disabling tracing without changing code.
+    ///
     /// 从不采样
     /// Never sample
     AlwaysOff,
+    /// Record a random fraction of traces. The value must be in `[0.0, 1.0]`.
+    /// Sampling is stable: the same `trace_id` always produces the same decision.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// SamplingStrategy::Probabilistic(0.05) // sample 5% of traces
+    /// ```
+    ///
     /// 按概率采样
     /// Probabilistic sampling
     Probabilistic(f64),
+    /// Admit at most `traces_per_second` new root spans per second.
+    /// Excess spans are dropped. Thread-safe via atomic CAS.
+    ///
     /// 基于速率限制采样
     /// Rate-limiting based sampling
     RateLimiting {
@@ -34,6 +62,10 @@ pub enum SamplingStrategy {
         /// Holds (timestamp_secs << 32) | (count)
         state: Arc<AtomicU64>,
     },
+    /// Inherit the sampling decision from the parent span's context.
+    /// If there is no parent, fall back to the `root` strategy.
+    /// Use this in multi-service deployments so the caller controls sampling.
+    ///
     /// 父级决定
     /// Parent-based decision
     ParentBased { root: Box<SamplingStrategy> },
@@ -106,6 +138,20 @@ impl SamplingStrategy {
     }
 }
 
+/// Configuration for the MoFA distributed tracer.
+///
+/// Use [`TracerConfig::new`] for a quick setup with sensible defaults,
+/// or build the struct directly for full control.
+///
+/// # Example
+/// ```rust,no_run
+/// use mofa_monitoring::tracing::{TracerConfig, SamplingStrategy};
+///
+/// let config = TracerConfig::new("my-agent")
+///     .with_version("1.2.3")
+///     .with_sampling(SamplingStrategy::Probabilistic(0.1));
+/// ```
+///
 /// Tracer 配置
 /// Tracer configuration
 #[derive(Debug, Clone)]
@@ -189,8 +235,14 @@ pub trait SpanProcessor: Send + Sync {
     async fn force_flush(&self) -> Result<(), String>;
 }
 
-/// 简单 Span 处理器 - 直接导出
-/// Simple Span Processor - Export directly
+/// Exports each span synchronously as soon as it ends.
+///
+/// **When to use**: development, testing, or very low-throughput services where
+/// you want immediate visibility and can tolerate the per-span export latency.
+///
+/// **Trade-off vs [`BatchSpanProcessor`]**: every span end call blocks until the
+/// exporter round-trip completes (network I/O for remote exporters). For production
+/// workloads prefer `BatchSpanProcessor` which offloads exports to a background task.
 pub struct SimpleSpanProcessor {
     exporter: Arc<dyn TracingExporter>,
 }
@@ -223,8 +275,17 @@ impl SpanProcessor for SimpleSpanProcessor {
     }
 }
 
-/// 批处理 Span 处理器
-/// Batch Span Processor
+/// Buffers completed spans and exports them in batches on a background Tokio task.
+///
+/// **When to use**: production or any service where exporter latency would otherwise
+/// appear in your application's critical path.
+///
+/// Configure the trade-offs via [`ExporterConfig`]:
+/// - `batch_size` — maximum spans per export call (default: 512)
+/// - `export_interval_ms` — maximum time a span waits in the buffer (default: 5 000 ms)
+/// - `max_queue_size` — spans are dropped when the queue exceeds this limit (default: 2 048)
+///
+/// Call `force_flush` before process exit to avoid losing buffered spans.
 pub struct BatchSpanProcessor {
     exporter: Arc<dyn TracingExporter>,
     buffer: Arc<RwLock<Vec<SpanData>>>,
@@ -434,8 +495,28 @@ impl Tracer {
     }
 }
 
-/// Tracer Provider - 管理多个 Tracer
-/// Tracer Provider - Manages multiple Tracers
+/// Factory and lifecycle manager for [`Tracer`] instances.
+///
+/// A single `TracerProvider` owns the [`SpanProcessor`] (and therefore the exporter),
+/// so all tracers it creates share the same export pipeline. This matches the
+/// OpenTelemetry spec's `TracerProvider` concept.
+///
+/// # Examples
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use mofa_monitoring::tracing::{
+///     ConsoleExporter, ExporterConfig, SimpleSpanProcessor, TracerConfig, TracerProvider,
+/// };
+///
+/// # async fn example() {
+/// let exporter = Arc::new(ConsoleExporter::new(ExporterConfig::new("my-agent")));
+/// let processor = Arc::new(SimpleSpanProcessor::new(exporter));
+/// let provider = TracerProvider::new(TracerConfig::new("my-agent"), processor);
+///
+/// // Obtain a tracer scoped to a specific component
+/// let tracer = provider.tracer("rag-pipeline").await;
+/// # }
+/// ```
 pub struct TracerProvider {
     config: TracerConfig,
     processor: Arc<dyn SpanProcessor>,
@@ -510,7 +591,11 @@ impl TracerProvider {
 }
 
 /// 全局 Tracer
-/// Global Tracer
+/// Process-wide singleton that holds a reference to the active [`TracerProvider`].
+///
+/// Use `GlobalTracer` when library code needs to emit spans without requiring
+/// callers to pass a tracer explicitly. Call [`GlobalTracer::set_provider`] once
+/// at startup, then use [`global_tracer()`] anywhere to obtain a [`Tracer`].
 pub struct GlobalTracer {
     provider: Arc<RwLock<Option<Arc<TracerProvider>>>>,
 }

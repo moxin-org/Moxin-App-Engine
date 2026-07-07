@@ -11,7 +11,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Agent Tracer
+/// High-level tracing helper for MoFA agents.
+///
+/// Wraps a low-level [`Tracer`] with agent-aware span naming conventions
+/// (`agent.<id>.<operation>`) and automatically attaches `agent.id` and
+/// `agent.operation` attributes to every span.
+///
+/// # Examples
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use mofa_monitoring::tracing::{
+///     AgentTracer, ConsoleExporter, ExporterConfig, SimpleSpanProcessor,
+///     TracerConfig, Tracer,
+/// };
+///
+/// # async fn example() {
+/// let exporter = Arc::new(ConsoleExporter::new(ExporterConfig::new("my-agent")));
+/// let processor = Arc::new(SimpleSpanProcessor::new(exporter));
+/// let tracer = Arc::new(Tracer::new(TracerConfig::new("my-agent"), processor));
+/// let agent_tracer = AgentTracer::new(tracer);
+///
+/// let span = agent_tracer.start_operation("agent-001", "llm.call", None).await;
+/// // ... perform work ...
+/// agent_tracer.end_span(&span).await;
+/// # }
+/// ```
 pub struct AgentTracer {
     tracer: Arc<Tracer>,
     propagator: Arc<dyn TracePropagator>,
@@ -377,7 +401,11 @@ impl MessageTracer {
     }
 }
 
-/// Traced Agent Wrapper
+/// Wraps any agent type `A` and provides a `traced_operation` method that
+/// automatically starts/ends a span around the given async closure.
+///
+/// Prefer this over manual `start_operation`/`end_span` calls when you don't
+/// need to keep a span reference beyond the operation's lifetime.
 pub struct TracedAgent<A> {
     agent: A,
     tracer: Arc<AgentTracer>,
@@ -468,7 +496,31 @@ impl<W> TracedWorkflow<W> {
     }
 }
 
-/// Helper function: trace Agent operation
+/// Convenience wrapper: starts a span, calls `f` with it, then ends the span.
+///
+/// Use this instead of manually calling `start_operation`/`end_span` when
+/// you don't need to access the span outside the closure.
+///
+/// # Examples
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use mofa_monitoring::tracing::{
+///     AgentTracer, ConsoleExporter, ExporterConfig, SimpleSpanProcessor,
+///     TracerConfig, Tracer, trace_agent_operation,
+/// };
+///
+/// # async fn example() {
+/// # let exporter = Arc::new(ConsoleExporter::new(ExporterConfig::new("x")));
+/// # let processor = Arc::new(SimpleSpanProcessor::new(exporter));
+/// # let tracer = Arc::new(Tracer::new(TracerConfig::new("x"), processor));
+/// let agent_tracer = AgentTracer::new(tracer);
+///
+/// let answer = trace_agent_operation(
+///     &agent_tracer, "agent-001", "llm.call", None,
+///     |_span| async move { "response".to_string() },
+/// ).await;
+/// # }
+/// ```
 pub async fn trace_agent_operation<F, Fut, R>(
     tracer: &AgentTracer,
     agent_id: &str,

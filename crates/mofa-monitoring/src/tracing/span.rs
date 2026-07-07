@@ -11,25 +11,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Span 类型
-/// Span types
+/// Describes the relationship between a span and the component that produced it.
+///
+/// Backends use `SpanKind` to build service dependency maps and correctly
+/// attribute cross-service latency.
+///
+/// | Kind | Use for |
+/// |------|---------|
+/// | `Internal` | In-process work: LLM reasoning, tool selection, prompt building |
+/// | `Server` | Handling an inbound network request (e.g. an HTTP handler in an agent gateway) |
+/// | `Client` | Outbound call to an external service: REST API, database, vector store |
+/// | `Producer` | Publishing a message to a queue or event bus |
+/// | `Consumer` | Receiving and processing a message from a queue or event bus |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SpanKind {
-    /// 内部操作
-    /// Internal operation
+    /// In-process operation with no network boundary.
+    /// Default for most MoFA agent work: LLM calls, tool execution, memory lookup.
     #[default]
     Internal,
-    /// 服务器端（处理请求）
-    /// Server side (handling request)
+    /// This span handles an inbound synchronous request.
     Server,
-    /// 客户端（发起请求）
-    /// Client side (initiating request)
+    /// This span initiates a synchronous call to an external service.
     Client,
-    /// 消息生产者
-    /// Message producer
+    /// This span publishes a message to an asynchronous channel.
     Producer,
-    /// 消息消费者
-    /// Message consumer
+    /// This span processes a message received from an asynchronous channel.
     Consumer,
 }
 

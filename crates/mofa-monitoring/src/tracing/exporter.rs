@@ -338,21 +338,28 @@ impl JaegerExporter {
     }
 }
 
-/// OTLP 导出器配置
-/// OTLP exporter configuration
+/// Configuration for the [`OtlpExporter`].
+///
+/// Defaults follow the standard OpenTelemetry Collector ports:
+/// - gRPC: `http://localhost:4317`
+/// - HTTP/JSON or HTTP/Protobuf: `http://localhost:4318`
+///
+/// You can override at runtime via standard OTLP environment variables:
+/// - `OTEL_EXPORTER_OTLP_ENDPOINT` — base URL for all signals
+/// - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` — overrides endpoint for traces only
+/// - `OTEL_EXPORTER_OTLP_HEADERS` — comma-separated key=value pairs,
+///   e.g. `"Authorization=Bearer <token>,x-env=prod"`
+/// - `OTEL_EXPORTER_OTLP_TIMEOUT` — timeout in milliseconds
 #[derive(Debug, Clone)]
 pub struct OtlpConfig {
-    /// Endpoint
-    /// Endpoint
+    /// OTLP collector endpoint URL. Default: `http://localhost:4317` (gRPC).
     pub endpoint: String,
-    /// 协议 (grpc 或 http)
-    /// Protocol (grpc or http)
+    /// Wire protocol. Default: [`OtlpProtocol::Grpc`].
     pub protocol: OtlpProtocol,
-    /// Headers
-    /// Headers
+    /// Additional headers sent with every export request.
+    /// Commonly used for bearer-token authentication.
     pub headers: std::collections::HashMap<String, String>,
-    /// 超时（毫秒）
-    /// Timeout (milliseconds)
+    /// Per-request timeout in milliseconds. Default: 10 000 ms.
     pub timeout_ms: u64,
 }
 
@@ -374,8 +381,11 @@ impl Default for OtlpConfig {
     }
 }
 
-/// OTLP 导出器
-/// OTLP Exporter
+/// Exports spans over the OpenTelemetry Protocol (OTLP).
+///
+/// Compatible with any OTLP-capable backend including OpenTelemetry Collector,
+/// Grafana Tempo, and Jaeger ≥ 1.35 (use its OTLP port 4317/4318, not the
+/// legacy Thrift UDP agent which is deprecated as of Jaeger 1.35).
 pub struct OtlpExporter {
     config: ExporterConfig,
     otlp_config: OtlpConfig,
