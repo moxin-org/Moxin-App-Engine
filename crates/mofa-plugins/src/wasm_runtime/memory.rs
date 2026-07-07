@@ -99,7 +99,9 @@ impl MemoryRegion {
     }
 
     pub fn contains(&self, addr: GuestPtr) -> bool {
-        addr.0 >= self.start.0 && addr.0 < self.start.0 + self.size
+        // Use subtraction instead of addition to avoid u32 overflow when the
+        // region is positioned near the top of the 32-bit address space.
+        addr.0 >= self.start.0 && addr.0 - self.start.0 < self.size
     }
 
     pub fn end(&self) -> GuestPtr {
@@ -137,7 +139,8 @@ impl WasmMemory {
 
     /// Get current size in bytes
     pub fn size(&self) -> u32 {
-        self.pages * Self::PAGE_SIZE
+        // saturating_mul prevents u32 overflow if pages ever approaches u32::MAX.
+        self.pages.saturating_mul(Self::PAGE_SIZE)
     }
 
     /// Get current size in pages
@@ -434,12 +437,13 @@ impl MemoryAllocator {
 
             // Check if blocks are adjacent
             if block.end() == coalesced.start {
-                // Block is immediately before
-                coalesced = MemoryRegion::new(block.start, block.size + coalesced.size);
+                // Block is immediately before; saturating_add avoids overflow
+                // when coalescing regions that span the end of the address space.
+                coalesced = MemoryRegion::new(block.start, block.size.saturating_add(coalesced.size));
                 self.free_blocks.remove(i);
             } else if coalesced.end() == block.start {
                 // Block is immediately after
-                coalesced = MemoryRegion::new(coalesced.start, coalesced.size + block.size);
+                coalesced = MemoryRegion::new(coalesced.start, coalesced.size.saturating_add(block.size));
                 self.free_blocks.remove(i);
             } else {
                 i += 1;
@@ -554,5 +558,58 @@ mod tests {
 
         buf.clear().await;
         assert!(buf.is_empty().await);
+    }
+
+    #[test]
+    fn contains_does_not_overflow_near_u32_max() {
+        // Regions near the top of the u32 address space previously caused
+        // `start + size` to wrap in release mode, making low-address pointers
+        // appear to be inside the region.
+        let region = MemoryRegion::new(GuestPtr::new(u32::MAX - 10), 11);
+
+        // Addresses that are genuinely inside the region.
+        assert!(region.contains(GuestPtr::new(u32::MAX - 10))); // start
+        assert!(region.contains(GuestPtr::new(u32::MAX - 5))); // mid-range
+        assert!(region.contains(GuestPtr::new(u32::MAX))); // last byte
+
+        // Low addresses must NOT be falsely matched after a wrap-around.
+        assert!(!region.contains(GuestPtr::new(0)));
+        assert!(!region.contains(GuestPtr::new(5)));
+        // One byte before the start also must not match.
+        assert!(!region.contains(GuestPtr::new(u32::MAX - 11)));
+    }
+
+    #[test]
+    fn wasm_memory_size_saturates_instead_of_overflowing() {
+        // `pages * PAGE_SIZE` would wrap to 0 with plain `*` if pages == 65536.
+        // With saturating_mul it must return u32::MAX instead of 0.
+        let mut mem = WasmMemory::new(0, None);
+        mem.pages = u32::MAX;
+        assert_eq!(mem.size(), u32::MAX);
+    }
+
+    #[test]
+    fn return_block_coalescing_saturates_instead_of_overflowing() {
+        let mut allocator = MemoryAllocator::new(16);
+
+        // Two adjacent regions whose combined size would overflow u32.
+        allocator.free_blocks.push(MemoryRegion {
+            start: GuestPtr::new(0),
+            size: u32::MAX - 10,
+            allocated: false,
+            tag: None,
+        });
+        let second = MemoryRegion {
+            start: GuestPtr::new(u32::MAX - 10),
+            size: 11,
+            allocated: false,
+            tag: None,
+        };
+
+        // Returning the second block triggers coalescing.  Must not panic or
+        // produce a wrapped-around (smaller) size.
+        allocator.return_block(second);
+        assert_eq!(allocator.free_blocks.len(), 1);
+        assert_eq!(allocator.free_blocks[0].size, u32::MAX);
     }
 }
