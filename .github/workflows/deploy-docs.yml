@@ -30,10 +30,10 @@ jobs:
         working-directory: docs/mofa-doc
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6  
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203  # stable
 
       - name: Install mdBook
         run: |
@@ -44,7 +44,7 @@ jobs:
         run: ./scripts/build-docs.sh
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v4  
         with:
           path: docs/mofa-doc/book
 
@@ -58,4 +58,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4  

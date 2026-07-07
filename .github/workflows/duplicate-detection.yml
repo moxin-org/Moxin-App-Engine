@@ -13,15 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Get current issue details
         id: current_issue
-        uses: actions/github-script@v7
-        with:
+        uses: actions/github-script@v7  
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issue = context.payload.issue;
@@ -35,7 +34,7 @@ jobs:
         env:
           CURRENT_ISSUE_TITLE: ${{ steps.current_issue.outputs.title }}
           CURRENT_ISSUE_NUMBER: ${{ steps.current_issue.outputs.number }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v7  
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -214,7 +213,7 @@ jobs:
 
       - name: Close duplicate issue
         if: steps.analyze_duplicates.outcome == 'success' && steps.analyze_duplicates.outputs.result != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v7  
         env:
           DUPLICATE_RESULT: ${{ steps.analyze_duplicates.outputs.result }}
           CURRENT_ISSUE_NUMBER: ${{ steps.current_issue.outputs.number }}
