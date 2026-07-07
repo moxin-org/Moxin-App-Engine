@@ -13,6 +13,12 @@ use sysinfo::{Pid, System};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+fn thread_count_from_tasks(tasks: Option<&std::collections::HashSet<Pid>>) -> u32 {
+    tasks
+        .map(|set| u32::try_from(set.len()).unwrap_or(u32::MAX))
+        .unwrap_or(0)
+}
+
 /// Metric type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MetricType {
@@ -598,7 +604,7 @@ impl MetricsCollector {
                     (
                         p.cpu_usage() as f64,
                         p.memory(),
-                        p.tasks().iter().count() as u32,
+                        thread_count_from_tasks(p.tasks()),
                     )
                 })
                 .unwrap_or((0.0, 0, 0));
@@ -753,6 +759,7 @@ impl MetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_counter() {
@@ -831,5 +838,20 @@ mod tests {
         let snapshot = collector.collect().await;
         assert_eq!(snapshot.agents.len(), 1);
         assert_eq!(snapshot.agents[0].agent_id, "agent-1");
+    }
+
+    #[test]
+    fn test_thread_count_from_tasks_none_returns_zero() {
+        assert_eq!(thread_count_from_tasks(None), 0);
+    }
+
+    #[test]
+    fn test_thread_count_from_tasks_counts_inner_set() {
+        let mut tasks = HashSet::new();
+        tasks.insert(Pid::from_u32(1));
+        tasks.insert(Pid::from_u32(2));
+        tasks.insert(Pid::from_u32(3));
+
+        assert_eq!(thread_count_from_tasks(Some(&tasks)), 3);
     }
 }
