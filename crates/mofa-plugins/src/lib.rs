@@ -14,6 +14,7 @@ pub mod error_conversions;
 
 pub mod asr;
 pub mod hot_reload;
+pub mod semver_resolver;
 pub mod skill;
 pub mod tool;
 pub mod tools;

@@ -628,6 +628,26 @@ fn verify_plugin_checksum(plugin_path: &Path, expected: &str) -> bool {
 mofa-plugin-name = "=0.1.5"  # Pin exact version
 ```
 
+### SemVer Dependency Resolution and Supply Chain Security
+
+PR #1493 adds a full SemVer resolver with OWASP Agentic AI Top 10 supply chain checks to the plugin install path. Before any plugin is written to disk:
+
+1. The resolver builds a conflict-free, locked dependency graph using backtracking (tries highest compatible version first, backs down on conflict).
+2. SupplyChainGuard checks: yanked status, trust score threshold, SLSA provenance level, dependency confusion (typosquat detection via Wagner-Fischer edit distance).
+3. Ed25519 signature verification against the publisher key from the registry manifest.
+4. PluginLockfile written -- serializable, committable, and reproducible across environments.
+
+Minimum config for enterprise deployment:
+
+```toml
+[plugin_resolver]
+min_trust_score = 0.7
+required_slsa_level = "Level2"
+verify_signatures = true
+```
+
+Trust score formula: `download_score * 0.3 + community_rating * 0.5 + recency_score * 0.2`
+
 ### Third-Party Plugin Risks
 
 **Risk Assessment**:

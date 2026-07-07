@@ -56,6 +56,7 @@ dirs = "5.0"
 md-5 = "0.10"
 backoff = { version = "0.4", features = ["tokio"] }
 futures = "0.3"
+semver = { version = "1", features = ["serde"] }
 
 [lints]
 workspace = true
