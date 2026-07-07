@@ -9,6 +9,7 @@ pub mod backend;
 pub mod bus;
 pub mod clock;
 pub mod report;
+pub mod runner;
 pub mod tools;
 
 pub use backend::MockLLMBackend;
@@ -17,5 +18,9 @@ pub use clock::{Clock, MockClock, SystemClock};
 pub use report::{
     JUnitFormatter, JsonFormatter, ReportFormatter, TestCaseResult, TestReport, TestReportBuilder,
     TestStatus, TextFormatter,
+};
+pub use runner::{
+    AsyncTestCase, AsyncTestOutcome, AsyncTestRunner, AsyncTestRunnerConfig, TestProgressEvent,
+    TestProgressState,
 };
 pub use tools::MockTool;
