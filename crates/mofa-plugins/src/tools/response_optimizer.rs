@@ -65,7 +65,7 @@ impl ResponseOptimizerTool {
     /// 更新反馈统计并检查是否需要切换教学模式
     /// Update feedback stats and check if teaching mode switch is needed
     fn update_feedback_stats(&self, feedback_type: &str) -> String {
-        let mut stats = self.feedback_stats.lock().unwrap();
+        let mut stats = self.feedback_stats.lock().unwrap_or_else(|e| e.into_inner());
         // 确保初始模式为normal
         // Ensure initial mode is set to normal
         if stats.current_mode.is_empty() {
@@ -133,7 +133,7 @@ impl ToolExecutor for ResponseOptimizerTool {
                 // Update feedback statistics and check for mode switching
                 let mode_change = self.update_feedback_stats(feedback_type);
 
-                let stats = self.feedback_stats.lock().unwrap();
+                let stats = self.feedback_stats.lock().unwrap_or_else(|e| e.into_inner());
 
                 Ok(json!({
                     "status": "success",
@@ -146,7 +146,7 @@ impl ToolExecutor for ResponseOptimizerTool {
                 }))
             }
             "check_status" => {
-                let mut stats = self.feedback_stats.lock().unwrap();
+                let mut stats = self.feedback_stats.lock().unwrap_or_else(|e| e.into_inner());
                 // 确保初始模式为normal
                 // Ensure initial mode is set to normal
                 if stats.current_mode.is_empty() {
@@ -161,7 +161,7 @@ impl ToolExecutor for ResponseOptimizerTool {
                 }))
             }
             "reset_stats" => {
-                let mut stats = self.feedback_stats.lock().unwrap();
+                let mut stats = self.feedback_stats.lock().unwrap_or_else(|e| e.into_inner());
 
                 *stats = FeedbackStats::default();
 
