@@ -33,6 +33,8 @@ kokoro = ["mofa-plugins/kokoro"]
 mcp = ["dep:rmcp"]
 # Enable Qdrant vector database support
 qdrant = ["dep:qdrant-client"]
+# Enable pgvector vector database support
+pgvector = ["dep:tokio-postgres", "dep:pgvector"]
 # Enable accurate token counting with tiktoken
 tiktoken = ["dep:tiktoken-rs"]
 # Enable parallel processing for compression
@@ -135,6 +137,12 @@ lazy_static = "1.4"
 
 # Qdrant vector database client (optional)
 qdrant-client = { version = "1.17", optional = true }
+
+# PostgreSQL client for pgvector (optional)
+tokio-postgres = { version = "0.7", optional = true }
+
+# pgvector Rust types (optional)
+pgvector = { version = "0.2", optional = true }
 
 # Image encoding and MIME detection
 base64 = "0.22"
