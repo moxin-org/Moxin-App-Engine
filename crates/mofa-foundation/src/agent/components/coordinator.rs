@@ -47,8 +47,12 @@ impl Coordinator for SequentialCoordinator {
     }
 
     async fn aggregate(&self, results: Vec<AgentOutput>) -> AgentResult<AgentOutput> {
-        let texts: Vec<String> = results.iter().map(|o| o.to_text()).collect();
-        Ok(AgentOutput::text(texts.join("\n\n---\n\n")))
+        aggregate_outputs(
+            results,
+            &AggregationStrategy::Concatenate {
+                separator: "\n\n---\n\n".to_string(),
+            },
+        )
     }
 
     fn pattern(&self) -> CoordinationPattern {
