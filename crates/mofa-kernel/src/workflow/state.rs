@@ -46,8 +46,13 @@ use super::StateUpdate;
 ///
 ///     fn get_value(&self, key: &str) -> Option<Value> {
 ///         match key {
-///             "messages" => Some(serde_json::to_value(&self.messages).unwrap()),
-///             "result" => Some(serde_json::to_value(&self.result).unwrap()),
+///                  "messages" => serde_json::to_value(&self.messages)
+///                     .map_err(|e| AgentError::SerializationError(e.to_string()))
+///                     .ok(),
+///                     "result" => serde_json::to_value(&self.result)
+///                     .map_err(|e| AgentError::SerializationError(e.to_string()))
+///                    .ok(),
+///
 ///             _ => None,
 ///         }
 ///     }
