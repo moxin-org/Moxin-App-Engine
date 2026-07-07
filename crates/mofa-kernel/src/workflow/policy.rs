@@ -94,9 +94,13 @@ impl RetryCondition {
             Self::Never => false,
             Self::OnTransient(patterns) => {
                 let lower = error_message.to_lowercase();
+                // `p.to_lowercase()` already allocates a `String`; calling
+                // `.as_str().to_owned()` on top converts it back to `String`
+                // via a needless round-trip (issue #1466).  Use `.as_str()`
+                // directly to borrow the temporary and avoid the extra alloc.
                 patterns
                     .iter()
-                    .any(|p| lower.contains(&p.to_lowercase().as_str().to_owned()))
+                    .any(|p| lower.contains(p.to_lowercase().as_str()))
             }
         }
     }
