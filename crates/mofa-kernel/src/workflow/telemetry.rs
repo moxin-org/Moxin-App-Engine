@@ -29,6 +29,7 @@
 //! - `DebugEvent::NodeEnd` — emitted when a node finishes execution
 //! - `DebugEvent::WorkflowEnd` — emitted when workflow execution completes
 //! - `DebugEvent::Error` — emitted on errors during execution
+//! - `DebugEvent::LLMCall` — emitted when an LLM API call completes
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -125,6 +126,37 @@ pub enum DebugEvent {
         /// Error description
         error: String,
     },
+
+    /// An LLM API call completed (success or failure).
+    ///
+    /// Captures per-request telemetry for LLM interactions, enabling
+    /// debugging of individual model calls within a workflow node.
+    LLMCall {
+        /// Node that triggered this LLM call (if within a workflow)
+        node_id: Option<String>,
+        /// Timestamp in milliseconds since epoch
+        timestamp_ms: u64,
+        /// LLM provider name (e.g. "openai", "anthropic")
+        provider: String,
+        /// Model identifier (e.g. "gpt-4", "claude-3-opus")
+        model: String,
+        /// Input messages sent to the model (serialized ChatMessages)
+        prompt_messages: Vec<serde_json::Value>,
+        /// Model response payload
+        response: serde_json::Value,
+        /// Number of tokens in the prompt
+        prompt_tokens: u64,
+        /// Number of tokens in the completion
+        completion_tokens: u64,
+        /// Wall-clock latency of the API call in milliseconds
+        latency_ms: u64,
+        /// Estimated cost in USD (None if pricing is unknown)
+        cost_usd: Option<f64>,
+        /// Call outcome: "ok" or "error"
+        status: String,
+        /// Error message if status is "error"
+        error: Option<String>,
+    },
 }
 
 impl DebugEvent {
@@ -137,6 +169,7 @@ impl DebugEvent {
             Self::NodeEnd { timestamp_ms, .. } => *timestamp_ms,
             Self::WorkflowEnd { timestamp_ms, .. } => *timestamp_ms,
             Self::Error { timestamp_ms, .. } => *timestamp_ms,
+            Self::LLMCall { timestamp_ms, .. } => *timestamp_ms,
         }
     }
 
@@ -149,6 +182,7 @@ impl DebugEvent {
             Self::NodeEnd { node_id, .. } => Some(node_id),
             Self::WorkflowEnd { .. } => None,
             Self::Error { node_id, .. } => node_id.as_deref(),
+            Self::LLMCall { node_id, .. } => node_id.as_deref(),
         }
     }
 
@@ -166,6 +200,7 @@ impl DebugEvent {
             Self::NodeEnd { .. } => "node_end",
             Self::WorkflowEnd { .. } => "workflow_end",
             Self::Error { .. } => "error",
+            Self::LLMCall { .. } => "llm_call",
         }
     }
 }
@@ -677,5 +712,85 @@ mod tests {
         let query = SessionQuery::default();
         let s = make_session("s1", "wf", "completed", 1000, Some(2000));
         assert!(query.matches(&s));
+    }
+
+    #[test]
+    fn test_llm_call_event_serialization() {
+        let event = DebugEvent::LLMCall {
+            node_id: Some("process".to_string()),
+            timestamp_ms: 1700000001000,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            prompt_messages: vec![json!({"role": "user", "content": "hello"})],
+            response: json!({"choices": [{"message": {"content": "hi"}}]}),
+            prompt_tokens: 5,
+            completion_tokens: 3,
+            latency_ms: 230,
+            cost_usd: Some(0.002),
+            status: "ok".to_string(),
+            error: None,
+        };
+
+        let serialized = serde_json::to_string(&event).unwrap();
+        let deserialized: DebugEvent = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.event_type(), "llm_call");
+        assert_eq!(deserialized.node_id(), Some("process"));
+        assert_eq!(deserialized.timestamp_ms(), 1700000001000);
+    }
+
+    #[test]
+    fn test_llm_call_event_without_node() {
+        let event = DebugEvent::LLMCall {
+            node_id: None,
+            timestamp_ms: 1000,
+            provider: "anthropic".to_string(),
+            model: "claude-3-opus".to_string(),
+            prompt_messages: vec![],
+            response: json!(null),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            latency_ms: 0,
+            cost_usd: None,
+            status: "error".to_string(),
+            error: Some("rate limited".to_string()),
+        };
+
+        assert_eq!(event.event_type(), "llm_call");
+        assert_eq!(event.node_id(), None);
+        assert_eq!(event.timestamp_ms(), 1000);
+
+        // Verify round-trip serialization
+        let json = serde_json::to_string(&event).unwrap();
+        let round_trip: DebugEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip.event_type(), "llm_call");
+    }
+
+    #[test]
+    fn test_llm_call_in_all_variants_serialize() {
+        // Ensure LLMCall is included in the full variant coverage test
+        let llm_event = DebugEvent::LLMCall {
+            node_id: Some("n1".to_string()),
+            timestamp_ms: 2000,
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            prompt_messages: vec![
+                json!({"role": "system", "content": "you are helpful"}),
+                json!({"role": "user", "content": "what is 2+2?"}),
+            ],
+            response: json!({"choices": [{"message": {"content": "4"}}]}),
+            prompt_tokens: 15,
+            completion_tokens: 1,
+            latency_ms: 150,
+            cost_usd: Some(0.001),
+            status: "ok".to_string(),
+            error: None,
+        };
+
+        let json = serde_json::to_string(&llm_event).unwrap();
+        let round_trip: DebugEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(llm_event.event_type(), round_trip.event_type());
+        assert_eq!(llm_event.timestamp_ms(), round_trip.timestamp_ms());
+        assert_eq!(llm_event.node_id(), round_trip.node_id());
     }
 }
