@@ -1,0 +1,28 @@
+{
+  "supported_dsl_versions": [
+    "1.0.0"
+  ],
+  "cases": [
+    {
+      "id": "customer_support",
+      "fixture": "customer_support.yaml",
+      "expected_version": "1.0.0",
+      "expected_node_count": 7,
+      "expected_edge_count": 8,
+      "expected_output_markers": [
+        "[classifier] mock response"
+      ]
+    },
+    {
+      "id": "parallel_analysis",
+      "fixture": "parallel_agents.yaml",
+      "expected_version": "1.0.0",
+      "expected_node_count": 8,
+      "expected_edge_count": 9,
+      "expected_output_markers": [
+        "[sentiment_analyzer] mock response",
+        "[summary_generator] mock response"
+      ]
+    }
+  ]
+}

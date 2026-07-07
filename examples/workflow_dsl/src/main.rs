@@ -3,7 +3,7 @@
 //! Demonstrates how to use the workflow DSL to define and execute workflows
 //! using YAML configuration files through the mofa-sdk.
 
-use mofa_sdk::llm::{LLMAgent, LLMAgentBuilder};
+use mofa_sdk::llm::{LLMAgent, LLMAgentBuilder, MockLLMProvider};
 use mofa_sdk::workflow::{
     ExecutorConfig, LlmAgentConfig, WorkflowDefinition, WorkflowDslParser,
     WorkflowExecutor, WorkflowValue,
@@ -111,35 +111,26 @@ async fn build_mock_agents(
     for (agent_id, config) in &definition.agents {
         let agent = if has_openai {
             // Build actual agent with OpenAI provider
-            #[cfg(feature = "openai")]
-            {
-                use mofa_sdk::llm::openai_from_env;
+            use mofa_sdk::llm::openai_from_env;
 
-                let provider = Arc::new(openai_from_env()?);
-                let mut builder = LLMAgentBuilder::new()
-                    .with_id(agent_id)
-                    .with_provider(provider)
-                    .with_model(&config.model);
+            let provider = Arc::new(openai_from_env()?);
+            let mut builder = LLMAgentBuilder::new()
+                .with_id(agent_id)
+                .with_provider(provider);
 
-                if let Some(prompt) = &config.system_prompt {
-                    builder = builder.with_system_prompt(prompt);
-                }
-
-                if let Some(temp) = config.temperature {
-                    builder = builder.with_temperature(temp);
-                }
-
-                if let Some(max_tokens) = config.max_tokens {
-                    builder = builder.with_max_tokens(max_tokens);
-                }
-
-                Arc::new(builder.build_async().await?)
+            if let Some(prompt) = &config.system_prompt {
+                builder = builder.with_system_prompt(prompt);
             }
 
-            #[cfg(not(feature = "openai"))]
-            {
-                build_mock_agent(agent_id, config).await?
+            if let Some(temp) = config.temperature {
+                builder = builder.with_temperature(temp);
             }
+
+            if let Some(max_tokens) = config.max_tokens {
+                builder = builder.with_max_tokens(max_tokens);
+            }
+
+            Arc::new(builder.build_async().await)
         } else {
             // Build mock agent without actual LLM
             build_mock_agent(agent_id, config).await?
@@ -167,17 +158,20 @@ async fn build_mock_agent(
         config.model
     );
 
-    // For demonstration, we'll build a simple agent
-    // In production, you would configure an actual LLM provider
+    // Use a deterministic mock provider so the example can run in CI/offline.
+    let provider = Arc::new(
+        MockLLMProvider::new(&format!("mock-{}", agent_id))
+            .with_default_response(format!("[{}] mock response", agent_id)),
+    );
+
     let mut builder = LLMAgentBuilder::new()
         .with_id(agent_id)
-        .with_name(&format!("Mock {}", agent_id));
+        .with_name(&format!("Mock {}", agent_id))
+        .with_provider(provider);
 
     if let Some(prompt) = &config.system_prompt {
         builder = builder.with_system_prompt(prompt);
     }
 
-    // Note: This won't actually work without a provider
-    // It's here to demonstrate the API structure
     Ok(Arc::new(builder.build_async().await))
 }

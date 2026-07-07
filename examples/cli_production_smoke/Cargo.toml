@@ -7,6 +7,9 @@ description = "User-perspective CLI production smoke checks for MoFA"
 [dependencies]
 tempfile.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+mofa-sdk = { path = "../../crates/mofa-sdk" }
 
 [lints]
 workspace = true

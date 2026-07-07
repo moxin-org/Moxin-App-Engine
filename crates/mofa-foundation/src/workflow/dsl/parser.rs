@@ -1,4 +1,4 @@
-//! Workflow DSL Parser
+﻿//! Workflow DSL Parser
 //!
 //! Parses YAML/TOML workflow definitions and builds executable workflows.
 
@@ -6,7 +6,8 @@ use super::env::substitute_env_recursive;
 use super::schema::*;
 use super::{DslError, DslResult};
 use crate::llm::LLMAgent;
-use crate::workflow::builder::WorkflowBuilder;
+use crate::workflow::graph::EdgeConfig;
+use crate::workflow::node::{RetryPolicy as NodeRetryPolicy, WorkflowNode};
 use crate::workflow::state::WorkflowValue;
 use std::collections::HashMap;
 use std::fs;
@@ -20,7 +21,6 @@ impl WorkflowDslParser {
     /// Parse workflow definition from YAML string
     pub fn from_yaml(content: &str) -> DslResult<WorkflowDefinition> {
         let value: serde_yaml::Value = serde_yaml::from_str(content)?;
-        // Apply environment variable substitution
         let json_value: serde_json::Value = serde_json::to_value(&value)?;
         let substituted = substitute_env_recursive(&json_value);
         let def: WorkflowDefinition = serde_json::from_value(substituted)?;
@@ -30,9 +30,8 @@ impl WorkflowDslParser {
     /// Parse workflow definition from TOML string
     pub fn from_toml(content: &str) -> DslResult<WorkflowDefinition> {
         let value: toml::Value = toml::from_str(content)?;
-        // Convert to JSON for env substitution
         let json_value: serde_json::Value = serde_json::to_value(&value)
-            .map_err(|e| DslError::Validation(format!("TOML to JSON conversion error: {}", e)))?;
+            .map_err(|e| DslError::Validation(format!("TOML to JSON conversion error: {e}")))?;
         let substituted = substitute_env_recursive(&json_value);
         let def: WorkflowDefinition = serde_json::from_value(substituted)?;
         Ok(def)
@@ -52,50 +51,64 @@ impl WorkflowDslParser {
             "yaml" | "yml" => Self::from_yaml(&content),
             "toml" => Self::from_toml(&content),
             _ => Err(DslError::Validation(format!(
-                "Unsupported file extension: {}",
-                extension
+                "Unsupported file extension: {extension}"
             ))),
         }
     }
 
-    /// Build a workflow graph from definition
+    /// Build a workflow graph from definition.
     ///
-    /// This method requires a registry of pre-built LLMAgent instances.
-    /// Agents referenced in the workflow definition must be available in the registry.
+    /// This path builds nodes directly into the graph to avoid implicit auto-wiring
+    /// side effects from fluent builder methods.
     pub async fn build_with_agents(
         definition: WorkflowDefinition,
         agent_registry: &HashMap<String, Arc<LLMAgent>>,
     ) -> DslResult<crate::workflow::WorkflowGraph> {
-        // Validate definition
         Self::validate(&definition)?;
 
-        // Build workflow
-        let mut builder = WorkflowBuilder::new(&definition.metadata.id, &definition.metadata.name)
-            .description(&definition.metadata.description);
+        let mut graph = crate::workflow::WorkflowGraph::new(
+            &definition.metadata.id,
+            &definition.metadata.name,
+        )
+        .with_description(&definition.metadata.description);
 
-        // Add nodes
         for node_def in definition.nodes {
-            builder = Self::add_node(builder, node_def, agent_registry).await?;
+            Self::add_node(&mut graph, node_def, agent_registry).await?;
         }
 
-        // Add edges
         for edge in definition.edges {
-            if let Some(condition) = &edge.condition {
-                builder = builder.conditional_edge(&edge.from, &edge.to, condition);
+            let mut cfg = if let Some(condition) = &edge.condition {
+                EdgeConfig::conditional(&edge.from, &edge.to, condition)
             } else {
-                builder = builder.edge(&edge.from, &edge.to);
+                EdgeConfig::new(&edge.from, &edge.to)
+            };
+
+            if let Some(label) = edge.label.as_deref() {
+                cfg = cfg.with_label(label);
             }
+
+            graph.add_edge(cfg);
         }
 
-        Ok(builder.build())
+        graph
+            .validate()
+            .map_err(|errs| DslError::Validation(errs.join("; ")))?;
+
+        Ok(graph)
     }
 
     /// Validate workflow definition
     fn validate(definition: &WorkflowDefinition) -> DslResult<()> {
-        // Check for required nodes
+        if let Some(version) = definition.metadata.version.as_deref() {
+            if version != "1.0.0" {
+                return Err(DslError::Validation(format!(
+                    "Unsupported workflow DSL version: {version}. Supported versions: [1.0.0]"
+                )));
+            }
+        }
+
         let node_ids: Vec<&str> = definition.nodes.iter().map(|n| n.id()).collect();
 
-        // Verify start node exists
         if !node_ids.iter().any(|&id| {
             definition
                 .nodes
@@ -107,7 +120,6 @@ impl WorkflowDslParser {
             ));
         }
 
-        // Verify end node exists
         if !node_ids.iter().any(|&id| {
             definition
                 .nodes
@@ -119,7 +131,6 @@ impl WorkflowDslParser {
             ));
         }
 
-        // Verify all edge references are valid
         for edge in &definition.edges {
             if !node_ids.contains(&edge.from.as_str()) {
                 return Err(DslError::InvalidEdge {
@@ -135,7 +146,6 @@ impl WorkflowDslParser {
             }
         }
 
-        // Verify agent references
         for node in &definition.nodes {
             if let NodeDefinition::LlmAgent { agent, .. } = node {
                 match agent {
@@ -144,9 +154,7 @@ impl WorkflowDslParser {
                             return Err(DslError::AgentNotFound(agent_id.clone()));
                         }
                     }
-                    AgentRef::Inline(_) => {
-                        // Inline agents are self-contained
-                    }
+                    AgentRef::Inline(_) => {}
                 }
             }
         }
@@ -154,27 +162,35 @@ impl WorkflowDslParser {
         Ok(())
     }
 
-    /// Add a node to the workflow builder
     async fn add_node(
-        mut builder: WorkflowBuilder,
+        graph: &mut crate::workflow::WorkflowGraph,
         node_def: NodeDefinition,
         agent_registry: &HashMap<String, Arc<LLMAgent>>,
-    ) -> DslResult<WorkflowBuilder> {
+    ) -> DslResult<()> {
         match node_def {
-            NodeDefinition::Start { id, .. } => {
-                builder = builder.start_with_id(&id);
+            NodeDefinition::Start { id, name } => {
+                let mut node = WorkflowNode::start(&id);
+                if let Some(custom_name) = name {
+                    node.config.name = custom_name;
+                }
+                graph.add_node(node);
             }
-            NodeDefinition::End { id, .. } => {
-                builder = builder.end_with_id(&id);
+            NodeDefinition::End { id, name } => {
+                let mut node = WorkflowNode::end(&id);
+                if let Some(custom_name) = name {
+                    node.config.name = custom_name;
+                }
+                graph.add_node(node);
             }
             NodeDefinition::Task {
-                id, name, executor, ..
+                id,
+                name,
+                executor,
+                config,
             } => {
-                // For now, tasks are limited to simple operations
-                // More complex task execution will be added later
-                match executor {
+                let mut node = match executor {
                     TaskExecutorDef::None => {
-                        builder = builder.task(&id, &name, |_ctx, input| async move { Ok(input) });
+                        WorkflowNode::task(&id, &name, |_ctx, input| async move { Ok(input) })
                     }
                     _ => {
                         return Err(DslError::Validation(
@@ -182,14 +198,16 @@ impl WorkflowDslParser {
                                 .to_string(),
                         ));
                     }
-                }
+                };
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
             NodeDefinition::LlmAgent {
                 id,
                 name,
                 agent,
                 prompt_template,
-                ..
+                config,
             } => {
                 let llm_agent = match agent {
                     AgentRef::Registry { agent_id } => agent_registry
@@ -197,79 +215,208 @@ impl WorkflowDslParser {
                         .ok_or_else(|| DslError::AgentNotFound(agent_id.clone()))?
                         .clone(),
                     AgentRef::Inline(_) => {
-                        // Build agent from inline config
-                        // Note: This requires a provider to be available
-                        // For now, we'll return an error
                         return Err(DslError::Build(
-                            "Inline agent configuration requires a provider. Use agent registry instead.".to_string(),
+                            "Inline agent configuration requires a provider. Use agent registry instead."
+                                .to_string(),
                         ));
                     }
                 };
 
-                if let Some(template) = prompt_template {
-                    builder = builder.llm_agent_with_template(&id, &name, llm_agent, template);
+                let mut node = if let Some(template) = prompt_template {
+                    WorkflowNode::llm_agent_with_template(&id, &name, llm_agent, template)
                 } else {
-                    builder = builder.llm_agent(&id, &name, llm_agent);
-                }
+                    WorkflowNode::llm_agent(&id, &name, llm_agent)
+                };
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
-            NodeDefinition::Condition { id, name, .. } => {
-                // Condition nodes need special handling - use the agent node type
-                // with a custom executor that evaluates to true/false
-                builder = builder.task(&id, &name, |_ctx, _input| async move {
-                    Ok(WorkflowValue::Bool(true))
-                });
+            NodeDefinition::Condition {
+                id,
+                name,
+                condition,
+                config,
+            } => {
+                let mut node = match condition {
+                    ConditionDef::Expression { expr } => {
+                        let expr_lc = expr.to_lowercase();
+                        WorkflowNode::condition(&id, &name, move |_ctx, input| {
+                            let expr_lc = expr_lc.clone();
+                            async move {
+                                let input_text = input
+                                    .as_str()
+                                    .map(|s| s.to_lowercase())
+                                    .unwrap_or_else(|| serde_json::to_string(&input).unwrap_or_default());
+                                input_text.contains(&expr_lc)
+                            }
+                        })
+                    }
+                    ConditionDef::Value {
+                        field,
+                        operator,
+                        value,
+                    } => WorkflowNode::condition(&id, &name, move |_ctx, input| {
+                        let field = field.clone();
+                        let operator = operator.clone();
+                        let value = value.clone();
+                        async move {
+                            let json_value = serde_json::to_value(&input).unwrap_or(serde_json::Value::Null);
+                            let candidate = json_value
+                                .get(&field)
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            match operator.as_str() {
+                                "==" => candidate == value,
+                                "!=" => candidate != value,
+                                _ => false,
+                            }
+                        }
+                    }),
+                };
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
-            NodeDefinition::Parallel { id, name, .. } => {
-                // Parallel node - just mark it, actual parallelism handled by edges
-                builder = builder.task(&id, &name, |_ctx, input| async move { Ok(input) });
+            NodeDefinition::Parallel { id, name, config } => {
+                let mut node = WorkflowNode::parallel(&id, &name, vec![]);
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
             NodeDefinition::Join {
-                id, name, wait_for, ..
+                id,
+                name,
+                wait_for,
+                config,
             } => {
-                let wait_for_refs: Vec<&str> = wait_for.iter().map(|s| s.as_str()).collect();
-                builder = builder.goto(&id);
-                // Note: The join node will be connected later
-                let _ = (id, name, wait_for_refs);
+                let wait_refs: Vec<&str> = wait_for.iter().map(|s| s.as_str()).collect();
+                let mut node = WorkflowNode::join(&id, &name, wait_refs);
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
-            NodeDefinition::Loop { id, name, body, .. } => match body {
-                TaskExecutorDef::None => {
-                    builder = builder.loop_node(
+            NodeDefinition::Loop {
+                id,
+                name,
+                body,
+                condition,
+                max_iterations,
+                config,
+            } => {
+                match body {
+                    TaskExecutorDef::None => {
+                        let mut node = WorkflowNode::loop_node(
+                            &id,
+                            &name,
+                            |_ctx, input| async move { Ok(input) },
+                            move |_ctx, input| {
+                                let condition = condition.clone();
+                                async move {
+                                    match condition {
+                                        LoopConditionDef::Count { max } => {
+                                            let current = input.as_i64().unwrap_or(0);
+                                            current < i64::from(max)
+                                        }
+                                        LoopConditionDef::While { .. } => true,
+                                        LoopConditionDef::Until { .. } => false,
+                                    }
+                                }
+                            },
+                            if max_iterations == 0 { 1 } else { max_iterations },
+                        );
+                        Self::apply_node_config(&mut node, &config);
+                        graph.add_node(node);
+                    }
+                    _ => {
+                        return Err(DslError::Validation(
+                            "Only 'none' executor type is currently supported for loop nodes"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+            NodeDefinition::Transform {
+                id,
+                name,
+                transform,
+                config,
+            } => {
+                let mut node = match transform {
+                    TransformDef::Template { template } => WorkflowNode::transform(
                         &id,
                         &name,
-                        |_ctx, input| async move { Ok(input) },
-                        |_ctx, _input| async move { false },
-                        10,
-                    );
-                }
-                _ => {
-                    return Err(DslError::Validation(
-                        "Loop body executor not supported yet".to_string(),
-                    ));
-                }
-            },
-            NodeDefinition::Transform { id, name, .. } => {
-                builder = builder.transform(&id, &name, |inputs| async move {
-                    inputs.get("input").cloned().unwrap_or(WorkflowValue::Null)
-                });
+                        move |inputs| {
+                            let template = template.clone();
+                            async move {
+                                let mut rendered = template.clone();
+                                for (key, value) in inputs {
+                                    let replacement = value
+                                        .as_str()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| serde_json::to_string(&value).unwrap_or_default());
+                                    rendered = rendered
+                                        .replace(&format!("{{{{ {} }}}}", key), &replacement)
+                                        .replace(&format!("{{{{{}}}}}", key), &replacement);
+                                }
+                                WorkflowValue::String(rendered)
+                            }
+                        },
+                    ),
+                    TransformDef::Expression { expr } => WorkflowNode::transform(
+                        &id,
+                        &name,
+                        move |_inputs| {
+                            let expr = expr.clone();
+                            async move { WorkflowValue::String(expr) }
+                        },
+                    ),
+                    TransformDef::MapReduce { .. } => WorkflowNode::transform(
+                        &id,
+                        &name,
+                        move |inputs| async move { WorkflowValue::Map(inputs) },
+                    ),
+                };
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
             NodeDefinition::SubWorkflow {
                 id,
                 name,
                 workflow_id,
-                ..
+                config,
             } => {
-                builder = builder.sub_workflow(&id, &name, &workflow_id);
+                let mut node = WorkflowNode::sub_workflow(&id, &name, &workflow_id);
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
             NodeDefinition::Wait {
                 id,
                 name,
                 event_type,
-                ..
+                config,
             } => {
-                builder = builder.wait(&id, &name, &event_type);
+                let mut node = WorkflowNode::wait(&id, &name, &event_type);
+                Self::apply_node_config(&mut node, &config);
+                graph.add_node(node);
             }
         }
 
-        Ok(builder)
+        Ok(())
+    }
+
+    fn apply_node_config(node: &mut WorkflowNode, config: &NodeConfigDef) {
+        if let Some(timeout_ms) = config.timeout_ms {
+            *node = node.clone().with_timeout(timeout_ms);
+        }
+
+        if let Some(retry) = &config.retry_policy {
+            let policy = NodeRetryPolicy {
+                max_retries: retry.max_retries,
+                retry_delay_ms: retry.retry_delay_ms,
+                exponential_backoff: retry.exponential_backoff,
+                max_delay_ms: retry.max_delay_ms,
+            };
+            *node = node.clone().with_retry(policy);
+        }
+
+        for (k, v) in &config.metadata {
+            node.config.metadata.insert(k.clone(), v.clone());
+        }
     }
 }

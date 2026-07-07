@@ -75,8 +75,86 @@ jobs:
       - name: Build examples
         run: cargo build --examples
 
-      - name: Run targeted examples compile smoke tests
+  examples-compile-smoke:
+    name: Examples Compile Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-examples-compile-smoke-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run manifest-driven compile smoke
         run: cargo test --manifest-path examples/cli_production_smoke/Cargo.toml --test examples_compile
+
+  examples-runtime-smoke:
+    name: Examples Runtime Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-examples-runtime-smoke-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run deterministic runtime smoke
+        run: cargo test --manifest-path examples/cli_production_smoke/Cargo.toml --test examples_runtime
+
+  examples-dsl-regression:
+    name: Examples DSL Regression
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-examples-dsl-regression-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run DSL fixture regression suite
+        run: cargo test --manifest-path examples/cli_production_smoke/Cargo.toml --test examples_dsl_regression
 
   docs:
     name: Documentation
