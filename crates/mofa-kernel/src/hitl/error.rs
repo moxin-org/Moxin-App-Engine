@@ -70,3 +70,26 @@ impl From<HitlError> for KernelError {
 
 /// Result type for HITL operations
 pub type HitlResult<T> = Result<T, HitlError>;
+
+/// The "Rulebook" for the Auditing Security System.
+/// This tells the AI exactly why a transaction was stopped.
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum AuditError {
+    // 1. The "Broken Seal" Rule (Integrity)
+    #[error("Audit integrity check failed: The digital seal (hash) does not match!")]
+    IntegrityMismatch,
+
+    // 2. The "Incomplete Form" Rule
+    #[error("Audit failed: You forgot to fill in the '{0}' field.")]
+    MissingRequiredField(String),
+
+    // 3. The "Time Travel" Rule
+    #[error("Audit failed: The clock says this happened in the future!")]
+    InvalidTimestamp,
+
+    // 4. The "VIP Only" Rule
+    #[error(
+        "Audit failed: This person does not have the right security key (Level {required} needed, but has Level {actual})."
+    )]
+    InsufficientSecurityLevel { required: u8, actual: u8 },
+}
