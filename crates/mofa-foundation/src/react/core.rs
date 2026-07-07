@@ -114,6 +114,7 @@ impl ReActStep {
 
 /// ReAct 执行结果
 /// ReAct execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReActResult {
     /// 任务 ID

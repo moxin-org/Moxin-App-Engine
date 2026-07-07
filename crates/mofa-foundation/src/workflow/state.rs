@@ -206,6 +206,7 @@ pub enum WorkflowStatus {
 
 /// 节点执行结果
 /// Node execution result
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct NodeResult {
     /// 节点 ID
@@ -572,6 +573,7 @@ impl CheckpointData {
 
 /// 工作流执行历史记录
 /// Workflow execution history record
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionRecord {
     /// 执行 ID
@@ -606,6 +608,7 @@ pub struct ExecutionRecord {
 
 /// 节点执行记录
 /// Node execution record
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeExecutionRecord {
     /// 节点 ID

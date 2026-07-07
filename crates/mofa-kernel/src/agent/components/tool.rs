@@ -197,6 +197,7 @@ impl From<&str> for ToolInput<serde_json::Value> {
 
 /// 工具执行结果
 /// Tool Execution Result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult<Out = serde_json::Value> {
     /// 是否成功

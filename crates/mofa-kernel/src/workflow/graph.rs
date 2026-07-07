@@ -343,6 +343,7 @@ pub enum StreamEvent<S: GraphState, V = serde_json::Value> {
 }
 
 /// Result of a single step execution
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct StepResult<S: GraphState, V = serde_json::Value> {
     /// Current state after the step

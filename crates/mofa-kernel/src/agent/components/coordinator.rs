@@ -253,6 +253,7 @@ pub enum TaskPriority {
 
 /// 分发结果
 /// Dispatch result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchResult {
     /// 任务 ID

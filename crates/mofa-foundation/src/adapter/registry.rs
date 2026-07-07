@@ -10,6 +10,7 @@ use super::descriptor::{AdapterDescriptor, Modality, ModelFormat};
 use super::error::{AdapterError, RejectionReason, ResolutionError};
 
 /// Result of adapter resolution containing the selected adapter and any rejection reasons
+#[must_use]
 #[derive(Debug)]
 pub struct ResolutionResult {
     /// The selected adapter

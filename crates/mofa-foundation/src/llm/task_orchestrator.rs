@@ -119,6 +119,7 @@ impl BackgroundTask {
 }
 
 /// Result from a completed task
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult {
     /// Task ID

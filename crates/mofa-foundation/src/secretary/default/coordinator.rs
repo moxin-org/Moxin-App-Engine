@@ -43,6 +43,7 @@ pub enum DispatchStrategy {
 
 /// 任务分配结果
 /// Task allocation result
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct DispatchResult {
     /// 子任务ID

@@ -167,6 +167,7 @@ impl InferenceRequest {
 }
 
 /// The result of an inference request after orchestration.
+#[must_use]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct InferenceResult {
     /// The generated output text

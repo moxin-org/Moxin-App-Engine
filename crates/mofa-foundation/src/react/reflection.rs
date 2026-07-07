@@ -129,6 +129,7 @@ pub struct ReflectionStep {
 }
 
 /// Result of running the Reflection agent.
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectionResult {
     /// Original task.

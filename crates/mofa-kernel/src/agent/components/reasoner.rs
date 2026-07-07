@@ -82,6 +82,7 @@ pub trait Reasoner: Send + Sync {
 
 /// 推理结果
 /// Reasoning result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningResult {
     /// 思考步骤

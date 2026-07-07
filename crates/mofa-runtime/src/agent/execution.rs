@@ -160,6 +160,7 @@ pub enum ExecutionStatus {
 
 /// 执行结果
 /// Execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionResult {
     /// 执行 ID

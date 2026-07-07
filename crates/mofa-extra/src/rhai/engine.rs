@@ -159,6 +159,7 @@ impl ScriptContext {
 
 /// 脚本执行结果
 /// Script execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptResult {
     /// 是否成功

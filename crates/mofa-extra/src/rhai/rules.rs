@@ -252,6 +252,7 @@ impl RuleGroupDefinition {
 // ============================================================================
 
 /// Rule match result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleMatchResult {
     /// Rule ID
@@ -263,6 +264,7 @@ pub struct RuleMatchResult {
 }
 
 /// Rule execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleExecutionResult {
     /// Executed rule ID
@@ -282,6 +284,7 @@ pub struct RuleExecutionResult {
 }
 
 /// Rule group execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleGroupExecutionResult {
     /// Group ID

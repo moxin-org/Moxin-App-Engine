@@ -142,6 +142,7 @@ pub enum ContextWindowPolicy {
 // ============================================================================
 
 /// Result of applying context window management.
+#[must_use]
 #[derive(Debug)]
 pub struct TrimResult {
     /// The trimmed messages, ready to send to the LLM.

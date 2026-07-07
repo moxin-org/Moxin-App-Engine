@@ -618,6 +618,7 @@ pub enum ExecutionMode {
 
 /// AutoAgent 执行结果
 /// AutoAgent execution result
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct AutoAgentResult {
     /// 执行模式

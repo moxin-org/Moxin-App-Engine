@@ -427,6 +427,7 @@ impl ScriptToolDefinition {
 
 /// 工具执行结果
 /// Tool execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExecutionResult {
     /// 工具 ID

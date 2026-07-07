@@ -304,6 +304,7 @@ impl CollaborationMessage {
 ///
 /// 包含执行结果和 LLM 的决策上下文
 /// Contains execution result and LLM's decision context
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollaborationResult {
     /// 是否成功

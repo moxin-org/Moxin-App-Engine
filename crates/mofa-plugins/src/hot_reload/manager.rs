@@ -105,6 +105,7 @@ impl HotReloadConfig {
 pub use mofa_kernel::plugin::{ReloadEvent, ReloadStrategy};
 
 /// Reload result
+#[must_use]
 #[derive(Debug)]
 pub struct ReloadResult {
     /// Plugin ID

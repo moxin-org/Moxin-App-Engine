@@ -415,6 +415,7 @@ pub struct ToolCall {
 
 /// 工具调用结果
 /// Tool call result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     /// 调用 ID

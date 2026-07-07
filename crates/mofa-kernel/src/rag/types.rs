@@ -119,6 +119,7 @@ impl DocumentChunk {
 }
 
 /// Result returned from a vector similarity search.
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     /// The id of the matched chunk

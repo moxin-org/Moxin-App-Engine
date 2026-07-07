@@ -247,6 +247,7 @@ pub enum RuntimeState {
 
 /// 数据流执行结果
 /// Dataflow execution result
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct DataflowResult {
     /// 数据流 UUID

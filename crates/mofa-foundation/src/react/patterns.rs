@@ -458,6 +458,7 @@ impl Default for ChainAgent {
 
 /// 链式执行结果
 /// Chain execution results
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainResult {
     /// 链 ID
@@ -500,6 +501,7 @@ impl ChainResult {
 
 /// 链式执行步骤结果
 /// Chain step execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainStepResult {
     /// 步骤序号
@@ -928,6 +930,7 @@ impl Default for ParallelAgent {
 
 /// 并行执行结果
 /// Parallel execution results
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParallelResult {
     /// 并行执行 ID
@@ -977,6 +980,7 @@ impl ParallelResult {
 
 /// 并行执行步骤结果
 /// Parallel step execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParallelStepResult {
     /// Agent 名称
@@ -1313,6 +1317,7 @@ impl Default for MapReduceAgent {
 
 /// MapReduce 执行结果
 /// MapReduce execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapReduceResult {
     /// MapReduce ID
@@ -1334,6 +1339,7 @@ pub struct MapReduceResult {
 
 /// Map 步骤结果
 /// Map step result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapStepResult {
     /// 索引

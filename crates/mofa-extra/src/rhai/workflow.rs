@@ -139,6 +139,7 @@ impl ScriptNodeConfig {
 
 /// 脚本节点执行结果
 /// Script node execution result
+#[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScriptNodeResult {
     /// 节点 ID
