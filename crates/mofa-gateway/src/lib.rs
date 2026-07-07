@@ -77,6 +77,9 @@ pub mod control_plane;
 pub mod error;
 pub mod gateway;
 pub mod handlers;
+/// Scaffolding for in-memory response caching. Designed to be wired
+/// into the gateway adapter filter chain in a subsequent iteration.
+pub mod cache;
 pub mod inference_bridge;
 pub mod middleware;
 pub mod observability;
