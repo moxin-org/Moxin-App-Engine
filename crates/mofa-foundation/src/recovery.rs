@@ -363,6 +363,7 @@ struct CircuitBreakerState {
     consecutive_failures: u32,
     consecutive_successes: u32,
     last_failure_time: Option<std::time::Instant>,
+    active_probes: u32,
 }
 
 impl CircuitBreaker {
@@ -375,6 +376,7 @@ impl CircuitBreaker {
                 consecutive_failures: 0,
                 consecutive_successes: 0,
                 last_failure_time: None,
+                active_probes: 0,
             }),
         }
     }
@@ -401,6 +403,7 @@ impl CircuitBreaker {
                         if last_failure.elapsed() >= self.config.recovery_timeout {
                             guard.state = CircuitState::HalfOpen;
                             guard.consecutive_successes = 0;
+                            guard.active_probes += 1;
                             // Allow the call through (half-open test)
                         } else {
                             return Err(GlobalError::Runtime(format!(
@@ -410,7 +413,13 @@ impl CircuitBreaker {
                         }
                     }
                 }
-                CircuitState::Closed | CircuitState::HalfOpen => {
+                CircuitState::HalfOpen => {
+                    if guard.active_probes >= self.config.success_threshold {
+                        return Err(GlobalError::Runtime("Circuit breaker is half-open (max probes running)".to_string()));
+                    }
+                    guard.active_probes += 1;
+                }
+                CircuitState::Closed => {
                     // Allow the call
                 }
             }
@@ -431,6 +440,7 @@ impl CircuitBreaker {
 
     fn record_success(&self) {
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.active_probes = guard.active_probes.saturating_sub(1);
         guard.consecutive_failures = 0;
         guard.consecutive_successes += 1;
 
@@ -444,6 +454,7 @@ impl CircuitBreaker {
 
     fn record_failure(&self) {
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.active_probes = guard.active_probes.saturating_sub(1);
         guard.consecutive_failures += 1;
         guard.consecutive_successes = 0;
         guard.last_failure_time = Some(std::time::Instant::now());
@@ -465,6 +476,7 @@ impl CircuitBreaker {
         guard.consecutive_failures = 0;
         guard.consecutive_successes = 0;
         guard.last_failure_time = None;
+        guard.active_probes = 0;
     }
 }
 
@@ -735,6 +747,51 @@ mod tests {
 
         cb.reset();
         assert_eq!(cb.state(), CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_half_open_limits_concurrent_probes() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            recovery_timeout: Duration::from_millis(50),
+            success_threshold: 2,
+        };
+        let cb = std::sync::Arc::new(CircuitBreaker::new(config));
+
+        // Open the circuit
+        let _ = cb.call(|| async { Err::<String, _>(GlobalError::llm("fail")) }).await;
+        assert_eq!(cb.state(), CircuitState::Open);
+
+        // Wait for recovery timeout to transition to HalfOpen internally on next call
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // Fire 4 concurrent requests
+        let mut handles = vec![];
+        for _ in 0..4 {
+            let cb_clone = cb.clone();
+            handles.push(tokio::spawn(async move {
+                cb_clone.call(|| async { 
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok::<_, GlobalError>("probe".to_string()) 
+                }).await
+            }));
+        }
+
+        let mut successes = 0;
+        let mut rejections = 0;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(_) => successes += 1,
+                Err(e) => {
+                    if e.to_string().contains("half-open") {
+                        rejections += 1;
+                    }
+                }
+            }
+        }
+
+        assert_eq!(successes, 2);
+        assert_eq!(rejections, 2);
     }
 
     // -- fallback_chain tests --
