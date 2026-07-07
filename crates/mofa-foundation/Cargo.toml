@@ -33,6 +33,8 @@ kokoro = ["mofa-plugins/kokoro"]
 mcp = ["dep:rmcp"]
 # Enable Qdrant vector database support
 qdrant = ["dep:qdrant-client"]
+# Enable distributed tracing with OpenTelemetry
+tracing-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 # Enable accurate token counting with tiktoken
 tiktoken = ["dep:tiktoken-rs"]
 # Enable parallel processing for compression
@@ -135,6 +137,10 @@ lazy_static = "1.4"
 
 # Qdrant vector database client (optional)
 qdrant-client = { version = "1.17", optional = true }
+
+# OpenTelemetry for distributed tracing (optional)
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
 
 # Image encoding and MIME detection
 base64 = "0.22"
