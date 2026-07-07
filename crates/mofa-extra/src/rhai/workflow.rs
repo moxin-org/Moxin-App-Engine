@@ -272,9 +272,11 @@ impl ScriptWorkflowNode {
             }
 
             if retry_count < self.config.max_retries {
-                // 指数退避重试
-                // Exponential backoff retry
-                let delay = std::time::Duration::from_millis(100 * 2u64.pow(retry_count));
+                // Exponential backoff retry, capped to avoid overflow.
+                // 2u64.pow(n) overflows for n >= 64, and 100 * 2^57 exceeds u64.
+                let exp = 2u64.saturating_pow(retry_count.min(63));
+                let delay_ms = 100u64.saturating_mul(exp).min(30_000);
+                let delay = std::time::Duration::from_millis(delay_ms);
                 tokio::time::sleep(delay).await;
             }
             retry_count += 1;
