@@ -21,7 +21,7 @@ fn make_fixture_from_template(template_dir_name: &str) -> tempfile::TempDir {
     root
 }
 
-fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> anyhow::Result<()> {
+fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
 
     for entry in fs::read_dir(from)? {

@@ -4,6 +4,9 @@ use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use crate::error::{CliError, CliResult};
+use crate::error::IntoCliReport as _;
+
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum DoctorScenario {
@@ -64,21 +67,25 @@ pub fn run(
     strict: bool,
     json: bool,
     fix: bool,
-) -> anyhow::Result<()> {
+) -> CliResult<()> {
     let project_path = path.unwrap_or_else(|| PathBuf::from("."));
     let report = build_report(&project_path, scenario, strict, fix)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let json_str = serde_json::to_string_pretty(&report)
+            .map_err(|e| CliError::SerializationError(e))?;
+        println!("{}", json_str);
     } else {
         print_report(&report);
     }
 
     if strict && report.summary.failed > 0 {
-        anyhow::bail!(
-            "doctor strict mode failed with {} failing checks",
-            report.summary.failed
-        );
+        return Err(CliError::Other(
+            format!(
+                "doctor strict mode failed with {} failing checks",
+                report.summary.failed
+            )
+        ).into());
     }
 
     Ok(())
@@ -89,7 +96,7 @@ fn build_report(
     scenario: DoctorScenario,
     strict: bool,
     fix: bool,
-) -> anyhow::Result<DoctorReport> {
+) -> CliResult<DoctorReport> {
     let mut checks = vec![
         check_project_directory(project_path),
         check_project_markers(project_path),
@@ -385,20 +392,24 @@ fn check_binary(binary: &str, required: bool) -> DoctorCheck {
     }
 }
 
-fn check_runtime_directories(fix: bool) -> anyhow::Result<Vec<DoctorCheck>> {
+fn check_runtime_directories(fix: bool) -> CliResult<Vec<DoctorCheck>> {
     let mut checks = vec![];
 
+    let config_dir = crate::utils::mofa_config_dir()?;
+    let data_dir = crate::utils::mofa_data_dir()?;
+    let cache_dir = crate::utils::mofa_cache_dir()?;
+
     let dirs = [
-        ("config", crate::utils::mofa_config_dir()?),
-        ("data", crate::utils::mofa_data_dir()?),
-        ("cache", crate::utils::mofa_cache_dir()?),
+        ("config", config_dir),
+        ("data", data_dir),
+        ("cache", cache_dir),
     ];
 
     for (name, dir) in dirs {
         if dir.exists() {
             checks.push(check_directory_writable(name, &dir));
         } else if fix {
-            std::fs::create_dir_all(&dir)?;
+            std::fs::create_dir_all(&dir).map_err(CliError::from).into_report()?;
             checks.push(DoctorCheck {
                 id: format!("runtime-dir-{name}"),
                 title: format!("Runtime {name} directory"),
