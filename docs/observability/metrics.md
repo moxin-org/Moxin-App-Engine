@@ -61,3 +61,47 @@ cargo check -p mofa-monitoring --features otlp-metrics --offline
 cargo test -p mofa-monitoring dashboard::prometheus --offline
 cargo test -p mofa-monitoring --features otlp-metrics tracing::metrics_exporter --offline
 ```
+
+## Swarm Distributed Tracing (SwarmTraceReporter)
+
+PR #1490 adds `SwarmTraceReporter` to `mofa-smith`. Every `mofa swarm run` execution now produces a distributed trace with one root span per goal and one child span per task, emitted as OpenTelemetry spans with `gen_ai.agent.*` semantic attributes.
+
+### Starting the reporter
+
+```rust
+use mofa_smith::{SwarmTraceReporter, OtlpBackend, LogBackend};
+
+// For production: send to Jaeger or Grafana Tempo via OTLP
+let backend = OtlpBackend::new("http://localhost:4318");
+let (reporter, handle) = SwarmTraceReporter::new(backend);
+tokio::spawn(reporter.run());
+
+// For local dev: print spans as JSON to stdout
+let (reporter, handle) = SwarmTraceReporter::new(LogBackend::default());
+```
+
+### Span attributes
+
+Every span carries these `gen_ai.agent.*` attributes from the OTel GenAI semantic conventions:
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.agent.id` | Agent UUID |
+| `gen_ai.agent.task` | Task description string |
+| `gen_ai.agent.risk_level` | "low" / "medium" / "high" / "critical" |
+| `gen_ai.agent.duration_ms` | Wall-clock duration |
+| `gen_ai.agent.outcome` | "success" / "failure" / "rejected" |
+
+### Pluggable backend
+
+Implement `TraceBackend` to send spans to any destination:
+
+```rust
+#[async_trait::async_trait]
+impl TraceBackend for MyBackend {
+    async fn record_span(&self, span: SpanEvent) -> Result<(), TraceError> {
+        // forward to Datadog, Zipkin, or any custom sink
+        Ok(())
+    }
+}
+```
