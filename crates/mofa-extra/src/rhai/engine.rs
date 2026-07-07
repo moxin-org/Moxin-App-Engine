@@ -814,11 +814,16 @@ pub fn dynamic_to_json(value: &Dynamic) -> serde_json::Value {
     } else if let Some(s) = value.clone().try_cast::<String>() {
         serde_json::Value::String(s)
     } else if value.is_array() {
-        let arr = value.clone().cast::<rhai::Array>();
+        // Use try_cast to stay consistent with the branches above and avoid
+        // a panic if the runtime type disagrees with is_array().
+        let arr = value.clone().try_cast::<rhai::Array>().unwrap_or_default();
         let json_arr: Vec<serde_json::Value> = arr.iter().map(dynamic_to_json).collect();
         serde_json::Value::Array(json_arr)
     } else if value.is_map() {
-        let map = value.clone().cast::<Map>();
+        let map = value
+            .clone()
+            .try_cast::<Map>()
+            .unwrap_or_default();
         let mut json_obj = serde_json::Map::new();
         for (k, v) in map.iter() {
             json_obj.insert(k.to_string(), dynamic_to_json(v));
