@@ -242,3 +242,249 @@ impl ToolExecutor for JsonTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── get_by_path ──────────────────────────────────────────────────────
+
+    #[test]
+    fn get_by_path_simple_key() {
+        let data = json!({"name": "alice"});
+        assert_eq!(JsonTool::get_by_path(&data, "name"), Some(&json!("alice")));
+    }
+
+    #[test]
+    fn get_by_path_nested() {
+        let data = json!({"user": {"name": "bob", "age": 30}});
+        assert_eq!(JsonTool::get_by_path(&data, "user.name"), Some(&json!("bob")));
+    }
+
+    #[test]
+    fn get_by_path_deeply_nested() {
+        let data = json!({"a": {"b": {"c": {"d": 42}}}});
+        assert_eq!(JsonTool::get_by_path(&data, "a.b.c.d"), Some(&json!(42)));
+    }
+
+    #[test]
+    fn get_by_path_array_index() {
+        let data = json!({"items": ["x", "y", "z"]});
+        assert_eq!(JsonTool::get_by_path(&data, "items.1"), Some(&json!("y")));
+    }
+
+    #[test]
+    fn get_by_path_missing_key_returns_none() {
+        let data = json!({"name": "alice"});
+        assert_eq!(JsonTool::get_by_path(&data, "age"), None);
+    }
+
+    #[test]
+    fn get_by_path_missing_nested_returns_none() {
+        let data = json!({"user": {"name": "alice"}});
+        assert_eq!(JsonTool::get_by_path(&data, "user.email"), None);
+    }
+
+    #[test]
+    fn get_by_path_empty_path_returns_root() {
+        let data = json!({"key": "val"});
+        assert_eq!(JsonTool::get_by_path(&data, ""), Some(&data));
+    }
+
+    #[test]
+    fn get_by_path_array_out_of_bounds() {
+        let data = json!({"items": [1, 2]});
+        assert_eq!(JsonTool::get_by_path(&data, "items.5"), None);
+    }
+
+    // ── set_by_path ──────────────────────────────────────────────────────
+
+    #[test]
+    fn set_by_path_overwrite_existing() {
+        let mut data = json!({"name": "alice"});
+        JsonTool::set_by_path(&mut data, "name", json!("bob")).unwrap();
+        assert_eq!(data["name"], json!("bob"));
+    }
+
+    #[test]
+    fn set_by_path_nested() {
+        let mut data = json!({"user": {"name": "alice"}});
+        JsonTool::set_by_path(&mut data, "user.name", json!("charlie")).unwrap();
+        assert_eq!(data["user"]["name"], json!("charlie"));
+    }
+
+    #[test]
+    fn set_by_path_add_new_key() {
+        let mut data = json!({"name": "alice"});
+        JsonTool::set_by_path(&mut data, "age", json!(25)).unwrap();
+        assert_eq!(data["age"], json!(25));
+    }
+
+    #[test]
+    fn set_by_path_array_index() {
+        let mut data = json!({"items": ["a", "b", "c"]});
+        JsonTool::set_by_path(&mut data, "items.1", json!("B")).unwrap();
+        assert_eq!(data["items"][1], json!("B"));
+    }
+
+    #[test]
+    fn set_by_path_invalid_intermediate_returns_error() {
+        let mut data = json!({"name": "alice"});
+        let result = JsonTool::set_by_path(&mut data, "address.street", json!("123 Main"));
+        assert!(result.is_err());
+    }
+
+    // ── execute: parse ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_parse_valid_json() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "parse", "data": r#"{"key":"value"}"#}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"]["key"], "value");
+    }
+
+    #[tokio::test]
+    async fn execute_parse_invalid_json_returns_error() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "parse", "data": "not json {"}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    // ── execute: stringify ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_stringify_compact() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "stringify", "data": {"k": "v"}, "pretty": false}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        let s = result["result"].as_str().unwrap();
+        // Compact has no newlines
+        assert!(!s.contains('\n'));
+        assert!(s.contains("\"k\""));
+    }
+
+    // ── execute: get ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_get_found() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "get", "data": {"user": {"name": "alice"}}, "path": "user.name"}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"], "alice");
+    }
+
+    #[tokio::test]
+    async fn execute_get_not_found() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "get", "data": {"user": {}}, "path": "user.email"}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], false);
+    }
+
+    // ── execute: set ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_set_returns_modified_data() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "set", "data": {"a": 1}, "path": "a", "value": 99}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"]["a"], 99);
+    }
+
+    // ── execute: merge ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_merge_combines_objects() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "merge", "data": {"a": 1}, "other": {"b": 2, "c": 3}}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"]["a"], 1);
+        assert_eq!(result["result"]["b"], 2);
+        assert_eq!(result["result"]["c"], 3);
+    }
+
+    #[tokio::test]
+    async fn execute_merge_overwrites_existing_keys() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "merge", "data": {"a": 1, "b": 2}, "other": {"b": 99}}))
+            .await
+            .unwrap();
+        assert_eq!(result["result"]["b"], 99);
+    }
+
+    // ── execute: keys / values ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_keys() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "keys", "data": {"x": 1, "y": 2}}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn execute_values() {
+        let tool = JsonTool::new();
+        let result = tool
+            .execute(json!({"operation": "values", "data": {"a": 10, "b": 20}}))
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"].as_array().unwrap().len(), 2);
+    }
+
+    // ── execute: error cases ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_unknown_operation_returns_error() {
+        let tool = JsonTool::new();
+        let result = tool.execute(json!({"operation": "explode", "data": {}})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_missing_operation_returns_error() {
+        let tool = JsonTool::new();
+        let result = tool.execute(json!({"data": {}})).await;
+        assert!(result.is_err());
+    }
+
+    // ── definition ───────────────────────────────────────────────────────
+
+    #[test]
+    fn definition_has_correct_name() {
+        let tool = JsonTool::new();
+        assert_eq!(tool.definition().name, "json");
+    }
+
+    #[test]
+    fn default_creates_same_as_new() {
+        let a = JsonTool::new();
+        let b = JsonTool::default();
+        assert_eq!(a.definition().name, b.definition().name);
+    }
+}
