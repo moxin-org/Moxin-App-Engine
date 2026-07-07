@@ -36,3 +36,64 @@ impl FallbackStrategy for NoFallback {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FallbackStrategy, NoFallback, StaticFallback};
+    use mofa_kernel::agent::{error::AgentError, types::AgentOutput};
+
+    #[tokio::test]
+    async fn test_static_fallback_returns_some_output() {
+        let strategy = StaticFallback {
+            output: AgentOutput::text("service unavailable"),
+        };
+
+        let result = strategy
+            .on_failure("agent-a", &AgentError::ExecutionFailed("boom".to_string()), 1)
+            .await;
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().to_text(), "service unavailable");
+    }
+
+    #[tokio::test]
+    async fn test_static_fallback_ignores_agent_id_and_attempt_count() {
+        let strategy = StaticFallback {
+            output: AgentOutput::text("fallback"),
+        };
+        let error = AgentError::Timeout { duration_ms: 5000 };
+
+        let first = strategy.on_failure("agent-a", &error, 1).await;
+        let second = strategy.on_failure("agent-b", &error, 999).await;
+
+        assert_eq!(first.unwrap().to_text(), "fallback");
+        assert_eq!(second.unwrap().to_text(), "fallback");
+    }
+
+    #[tokio::test]
+    async fn test_no_fallback_returns_none() {
+        let strategy = NoFallback;
+
+        let result = strategy
+            .on_failure(
+                "agent-a",
+                &AgentError::ResourceUnavailable("db".to_string()),
+                3,
+            )
+            .await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_no_fallback_always_none_for_any_attempt_count() {
+        let strategy = NoFallback;
+        let error = AgentError::ExecutionFailed("boom".to_string());
+
+        let first = strategy.on_failure("agent", &error, 1).await;
+        let second = strategy.on_failure("agent", &error, 1000).await;
+
+        assert!(first.is_none());
+        assert!(second.is_none());
+    }
+}
