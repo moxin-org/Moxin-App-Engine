@@ -1,0 +1,60 @@
+name: Weekly Cargo.lock Update
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: weekly-cargo-lock-update
+  cancel-in-progress: true
+
+jobs:
+  update-cargo-lock:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Update Cargo.lock
+        run: cargo update
+
+      - name: Detect Cargo.lock changes
+        id: lock_changes
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute date suffix
+        if: steps.lock_changes.outputs.changed == 'true'
+        id: date
+        run: echo "stamp=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.lock_changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/update-cargo-lock-${{ steps.date.outputs.stamp }}
+          delete-branch: true
+          commit-message: chore(deps): update Cargo.lock via weekly automated run
+          title: "chore(deps): weekly Cargo.lock refresh"
+          body: |
+            Automated weekly Cargo.lock refresh via `cargo update`.
+
+            - Triggered by scheduled workflow or manual dispatch
+            - Opens a PR only when Cargo.lock changes
+            - Avoids direct commits to main
+          labels: dependencies
+          add-paths: |
+            Cargo.lock
