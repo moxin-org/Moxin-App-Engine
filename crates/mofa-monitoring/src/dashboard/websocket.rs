@@ -10,7 +10,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -114,7 +114,7 @@ pub struct WebSocketClient {
     /// Connected timestamp
     pub connected_at: u64,
     /// Subscribed topics
-    pub subscriptions: Vec<String>,
+    pub subscriptions: HashSet<String>,
     /// Auth info (populated when auth is enabled)
     pub auth_info: Option<AuthInfo>,
     /// Message sender
@@ -129,7 +129,7 @@ impl WebSocketClient {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            subscriptions: vec!["metrics".to_string()], // Default subscription
+            subscriptions: HashSet::from(["metrics".to_string()]), // Default subscription
             auth_info: None,
             sender,
         }
@@ -148,8 +148,8 @@ impl WebSocketClient {
     }
 
     pub fn is_subscribed(&self, topic: &str) -> bool {
-        self.subscriptions.contains(&topic.to_string())
-            || self.subscriptions.contains(&"*".to_string())
+        self.subscriptions.contains(topic)
+            || self.subscriptions.contains("*")
     }
 }
 
@@ -395,17 +395,15 @@ impl WebSocketHandler {
                                 WebSocketMessage::Subscribe { topics } => {
                                     let mut clients = clients.write().await;
                                     if let Some(client) = clients.get_mut(&client_id_clone) {
-                                        for topic in topics {
-                                            if !client.subscriptions.contains(&topic) {
-                                                client.subscriptions.push(topic);
-                                            }
-                                        }
+                                        client.subscriptions.extend(topics);
                                     }
                                 }
                                 WebSocketMessage::Unsubscribe { topics } => {
                                     let mut clients = clients.write().await;
                                     if let Some(client) = clients.get_mut(&client_id_clone) {
-                                        client.subscriptions.retain(|t| !topics.contains(t));
+                                        for topic in &topics {
+                                            client.subscriptions.remove(topic);
+                                        }
                                     }
                                 }
                                 WebSocketMessage::Heartbeat { .. } => {
@@ -500,11 +498,11 @@ mod tests {
 
         assert!(client.is_subscribed("metrics")); // Default subscription
 
-        client.subscriptions.push("alerts".to_string());
+        client.subscriptions.insert("alerts".to_string());
         assert!(client.is_subscribed("alerts"));
         assert!(!client.is_subscribed("other"));
 
-        client.subscriptions.push("*".to_string());
+        client.subscriptions.insert("*".to_string());
         assert!(client.is_subscribed("anything")); // Wildcard matches all
     }
 
