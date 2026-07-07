@@ -1,0 +1,78 @@
+name: Update Cargo.lock
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-cargo-lock
+  cancel-in-progress: true
+
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo update and capture summary
+        id: update
+        run: |
+          # Capture dry-run output for the PR body (cargo update prints to stderr)
+          SUMMARY=$(cargo update --dry-run 2>&1)
+          
+          # Write summary to GITHUB_OUTPUT safely
+          EOF=$(date +%s%N)
+          echo "summary<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$SUMMARY" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+          
+          # Run actual cargo update
+          cargo update
+
+      - name: Check if Cargo.lock was modified
+        id: check
+        run: |
+          if git diff --exit-code Cargo.lock > /dev/null; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Cargo.lock is already up to date"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Cargo.lock has been modified"
+          fi
+
+      - name: Get current date
+        if: steps.check.outputs.changed == 'true'
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/update-cargo-lock-${{ steps.date.outputs.date }}
+          commit-message: 'chore(deps): update Cargo.lock'
+          title: 'chore(deps): weekly Cargo.lock update'
+          body: |
+            Automated weekly `Cargo.lock` update.
+            
+            <details>
+            <summary>Update Summary (from `cargo update --dry-run`)</summary>
+            
+            ```text
+            ${{ steps.update.outputs.summary }}
+            ```
+            </details>
+          labels: dependencies
