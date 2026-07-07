@@ -395,7 +395,7 @@ impl HotReloadManager {
                                 // Queue reload based on strategy
                                 match config.base.strategy {
                                     ReloadStrategy::Immediate => {
-                                        Self::handle_reload(
+                                        if let Err(e) = Self::handle_reload(
                                             &watch_event.path,
                                             &loader,
                                             &registry,
@@ -404,7 +404,9 @@ impl HotReloadManager {
                                             &event_tx,
                                             &config,
                                             plugin_context.as_ref(),
-                                        ).await;
+                                        ).await {
+                                            warn!("Failed to reload plugin {:?}: {}", watch_event.path, e);
+                                        }
                                     }
                                     ReloadStrategy::Debounced(duration) => {
                                         pending_reloads.insert(
@@ -479,7 +481,7 @@ impl HotReloadManager {
 
                         for path in ready {
                             pending_reloads.remove(&path);
-                            Self::handle_reload(
+                            if let Err(e) = Self::handle_reload(
                                 &path,
                                 &loader,
                                 &registry,
@@ -488,7 +490,9 @@ impl HotReloadManager {
                                 &event_tx,
                                 &config,
                                 plugin_context.as_ref(),
-                            ).await;
+                            ).await {
+                                warn!("Failed to reload plugin {:?}: {}", path, e);
+                            }
                         }
                     }
 
@@ -601,7 +605,7 @@ impl HotReloadManager {
         event_tx: &broadcast::Sender<ReloadEvent>,
         config: &HotReloadConfig,
         context: Option<&PluginContext>,
-    ) {
+    ) -> Result<(), ReloadError> {
         let start = std::time::Instant::now();
 
         // Find the plugin
@@ -614,8 +618,9 @@ impl HotReloadManager {
                         .await
                 {
                     warn!("Failed to load plugin: {}", e);
+                    return Err(e);
                 }
-                return;
+                return Ok(());
             }
         };
 
@@ -687,7 +692,7 @@ impl HotReloadManager {
                     });
                 }
 
-                return;
+                return Err(ReloadError::LoadError(e));
             }
         };
 
@@ -704,7 +709,7 @@ impl HotReloadManager {
                     attempt: 1,
                 });
 
-                return;
+                return Err(ReloadError::LoadError(e));
             }
         };
 
@@ -712,15 +717,15 @@ impl HotReloadManager {
         if let Some(ctx) = context {
             if let Err(e) = dynamic_plugin.plugin_mut().load(ctx).await {
                 error!("Failed to load plugin: {}", e);
-                return;
+                return Err(ReloadError::InitError(e.to_string()));
             }
             if let Err(e) = dynamic_plugin.plugin_mut().init_plugin().await {
                 error!("Failed to initialize plugin: {}", e);
-                return;
+                return Err(ReloadError::InitError(e.to_string()));
             }
             if let Err(e) = dynamic_plugin.plugin_mut().start().await {
                 error!("Failed to start plugin: {}", e);
-                return;
+                return Err(ReloadError::InitError(e.to_string()));
             }
         }
 
@@ -764,6 +769,8 @@ impl HotReloadManager {
             success: true,
             duration,
         });
+
+        Ok(())
     }
 
     /// Load a plugin from path
@@ -859,7 +866,7 @@ impl HotReloadManager {
             &self.config,
             self.plugin_context.as_ref(),
         )
-        .await;
+        .await?;
 
         Ok(ReloadResult {
             plugin_id: plugin_id.to_string(),
