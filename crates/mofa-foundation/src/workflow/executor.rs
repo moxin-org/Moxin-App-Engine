@@ -1092,6 +1092,7 @@ impl WorkflowExecutor {
             let ctx_clone = ctx.clone();
             let node_clone = graph.get_node(&b_id).cloned();
             let semaphore = Arc::clone(&semaphore);
+            let node_timeout_ms = self.config.node_timeout_ms;
 
             join_set.spawn(async move {
                 let start_time = std::time::Instant::now();
@@ -1107,7 +1108,26 @@ impl WorkflowExecutor {
                         return Ok((b_id, WorkflowValue::Null));
                     }
 
-                    let result = node.execute(&ctx_clone, input_clone).await;
+                    let node_timeout = std::time::Duration::from_millis(node_timeout_ms);
+                    let result = match tokio::time::timeout(
+                        node_timeout,
+                        node.execute(&ctx_clone, input_clone),
+                    )
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(_) => {
+                            tracing::warn!(
+                                "Branch {} timed out after {:?}",
+                                b_id, node_timeout
+                            );
+                            NodeResult::failed(
+                                &b_id,
+                                &format!("Node timed out after {:?}", node_timeout),
+                                node_timeout_ms,
+                            )
+                        }
+                    };
                     ctx_clone
                         .set_node_output(&b_id, result.output.clone())
                         .await;
@@ -1207,7 +1227,26 @@ impl WorkflowExecutor {
 
         // 执行节点（可能有转换函数）
         // Execute node (may contain transformation functions)
-        let result = node.execute(ctx, WorkflowValue::Map(outputs)).await;
+        let node_timeout = std::time::Duration::from_millis(self.config.node_timeout_ms);
+        let result = match tokio::time::timeout(
+            node_timeout,
+            node.execute(ctx, WorkflowValue::Map(outputs)),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                warn!(
+                    "Join node {} timed out after {:?}",
+                    node.id(), node_timeout
+                );
+                NodeResult::failed(
+                    node.id(),
+                    &format!("Join node timed out after {:?}", node_timeout),
+                    self.config.node_timeout_ms,
+                )
+            }
+        };
 
         ctx.set_node_output(node.id(), result.output.clone()).await;
         ctx.set_node_status(node.id(), result.status.clone()).await;
@@ -1360,6 +1399,7 @@ impl WorkflowExecutor {
                 let ctx_clone = ctx_ref.clone();
                 let node_clone = graph.get_node(&n_id).cloned();
                 let semaphore = Arc::clone(&semaphore);
+                let node_timeout_ms = self.config.node_timeout_ms;
                 let predecessors: Vec<String> = graph
                     .get_predecessors(&n_id)
                     .into_iter()
@@ -1415,7 +1455,26 @@ impl WorkflowExecutor {
                                 let outputs = ctx_clone.get_node_outputs(&pred_refs).await;
                                 WorkflowValue::Map(outputs)
                             };
-                            let result = node.execute(&ctx_clone, node_input).await;
+                            let node_timeout = std::time::Duration::from_millis(node_timeout_ms);
+                            let result = match tokio::time::timeout(
+                                node_timeout,
+                                node.execute(&ctx_clone, node_input),
+                            )
+                            .await
+                            {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    tracing::warn!(
+                                        "Node {} timed out after {:?}",
+                                        n_id, node_timeout
+                                    );
+                                    NodeResult::failed(
+                                        &n_id,
+                                        &format!("Node timed out after {:?}", node_timeout),
+                                        node_timeout_ms,
+                                    )
+                                }
+                            };
                             ctx_clone
                                 .set_node_output(&n_id, result.output.clone())
                                 .await;
@@ -2195,5 +2254,134 @@ mod tests {
              got events: {:?}",
             *events
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Tests for fix #1428: node_timeout_ms must be enforced in parallel paths
+    // -------------------------------------------------------------------------
+
+    /// Verify that `node_timeout_ms` is enforced within `execute_branches_parallel`.
+    /// A parallel branch that exceeds the configured timeout must be terminated
+    /// and produce a `Failed` status containing "timed out".
+    #[tokio::test]
+    async fn test_parallel_branch_timeout_enforcement() {
+        let config = ExecutorConfig {
+            node_timeout_ms: 100, // 100ms timeout
+            ..ExecutorConfig::default()
+        };
+        let executor = WorkflowExecutor::new(config);
+
+        let mut graph = WorkflowGraph::new("par_timeout_wf", "Parallel Branch Timeout");
+        graph.add_node(WorkflowNode::start("start"));
+        graph.add_node(WorkflowNode::parallel(
+            "par_split",
+            "Split",
+            vec!["slow_branch", "fast_branch"],
+        ));
+        graph.add_node(WorkflowNode::task(
+            "slow_branch",
+            "Slow Branch",
+            |_ctx, _input| async move {
+                sleep(Duration::from_secs(5)).await;
+                Ok(WorkflowValue::String("should_not_reach".to_string()))
+            },
+        ));
+        graph.add_node(WorkflowNode::task(
+            "fast_branch",
+            "Fast Branch",
+            |_ctx, _input| async move {
+                Ok(WorkflowValue::String("fast_done".to_string()))
+            },
+        ));
+        graph.add_node(WorkflowNode::end("end"));
+
+        graph.connect("start", "par_split");
+        graph.connect("par_split", "slow_branch");
+        graph.connect("par_split", "fast_branch");
+        graph.connect("slow_branch", "end");
+        graph.connect("fast_branch", "end");
+
+        let started = Instant::now();
+        let record = executor
+            .execute(&graph, WorkflowValue::Null)
+            .await
+            .expect("execute() should return Ok");
+        let elapsed = started.elapsed();
+
+        // Should complete well under 5s (the slow_branch sleep duration)
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Parallel branch timeout was not enforced — took {:?}",
+            elapsed
+        );
+
+        // With stop_on_failure=true (default), the workflow should fail
+        match &record.status {
+            WorkflowStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("timed out"),
+                    "Expected timeout error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "Expected Failed status from timed-out parallel branch, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Verify that `node_timeout_ms` is enforced in `execute_parallel_workflow`.
+    /// A node in the layered execution path that exceeds the timeout must be
+    /// terminated and marked as failed.
+    #[tokio::test]
+    async fn test_parallel_workflow_timeout_enforcement() {
+        let config = ExecutorConfig {
+            node_timeout_ms: 100,
+            stop_on_failure: true,
+            ..ExecutorConfig::default()
+        };
+        let executor = WorkflowExecutor::new(config);
+
+        let mut graph = WorkflowGraph::new("layered_timeout_wf", "Layered Timeout");
+        graph.add_node(WorkflowNode::start("start"));
+        graph.add_node(WorkflowNode::task(
+            "hanging_task",
+            "Hanging Task",
+            |_ctx, _input| async move {
+                sleep(Duration::from_secs(5)).await;
+                Ok(WorkflowValue::String("should_not_reach".to_string()))
+            },
+        ));
+        graph.add_node(WorkflowNode::end("end"));
+        graph.connect("start", "hanging_task");
+        graph.connect("hanging_task", "end");
+
+        let started = Instant::now();
+        let record = executor
+            .execute_parallel_workflow(&graph, WorkflowValue::Null)
+            .await
+            .expect("execute_parallel_workflow should return Ok");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Layered parallel timeout was not enforced — took {:?}",
+            elapsed
+        );
+
+        match &record.status {
+            WorkflowStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("timed out"),
+                    "Expected timeout error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "Expected Failed status from timed-out layered node, got: {:?}",
+                other
+            ),
+        }
     }
 }
