@@ -475,6 +475,238 @@ impl SwarmScheduler for ParallelScheduler {
     }
 }
 
+pub struct DebateScheduler {
+    pub config: SwarmSchedulerConfig,
+}
+
+impl DebateScheduler {
+    pub fn new() -> Self {
+        Self {
+            config: SwarmSchedulerConfig::default(),
+        }
+    }
+
+    pub fn with_config(config: SwarmSchedulerConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl Default for DebateScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl SwarmScheduler for DebateScheduler {
+    fn pattern(&self) -> CoordinationPattern {
+        CoordinationPattern::Debate
+    }
+
+    #[instrument(
+        skip(self, dag, executor),
+        fields(pattern = "debate", task_count = dag.task_count())
+    )]
+    async fn execute(
+        &self,
+        dag: &mut SubtaskDAG,
+        executor: SubtaskExecutorFn,
+    ) -> GlobalResult<SchedulerSummary> {
+        let wall_start = Instant::now();
+        let total = dag.task_count();
+
+        if total < 3 {
+            return Err(GlobalError::runtime(
+                "Debate pattern requires at least 3 agents (debaters + judge)".to_string(),
+            ));
+        }
+
+        let mut results = Vec::with_capacity(total);
+        let mut succeeded = 0usize;
+        let mut failed = 0usize;
+        let mut skipped = 0usize;
+
+        info!(task_count = total, "Debate scheduler starting");
+
+        // Phase 1: Execute debate tasks in parallel (all except judge)
+        // In a debate, we run N-1 tasks in parallel (the debaters)
+        let all_task_indices: Vec<_> = dag.all_tasks().into_iter().map(|(idx, _)| idx).collect();
+        
+        let mut debate_tasks = Vec::new();
+        let mut judge_task_idx = None;
+
+        // Look for explicit judge task
+        for &idx in &all_task_indices {
+            let task = dag.get_task(idx).expect("task should exist");
+            if task.description.to_lowercase().contains("judge") {
+                judge_task_idx = Some(idx);
+                break;
+            }
+        }
+
+        // If no explicit judge task, the last task is the judge
+        let judge_idx = if let Some(idx) = judge_task_idx {
+            idx
+        } else {
+            *all_task_indices
+                .last()
+                .ok_or_else(|| GlobalError::runtime("No tasks in DAG".to_string()))?
+        };
+
+        // Collect debate task indices (all except judge)
+        for &idx in &all_task_indices {
+            if idx != judge_idx {
+                debate_tasks.push(idx);
+            }
+        }
+
+        // Execute debate tasks in parallel
+        let semaphore = self
+            .config
+            .concurrency_limit
+            .map(|n| Arc::new(Semaphore::new(n)));
+
+        let mut debate_futures = Vec::with_capacity(debate_tasks.len());
+
+        for &idx in &debate_tasks {
+            dag.mark_running(idx);
+            let task_snapshot = dag.get_task(idx).expect("missing idx").clone();
+
+            let exec = executor.clone();
+            let sem = semaphore.clone();
+            let timeout_dur = self.config.task_timeout;
+
+            let fut = async move {
+                let _permit = if let Some(s) = sem {
+                    Some(s.acquire_owned().await.expect("semaphore closed"))
+                } else {
+                    None
+                };
+
+                let start = Instant::now();
+                match timeout(timeout_dur, exec(idx, task_snapshot.clone())).await {
+                    Ok(Ok(output)) => {
+                        TaskExecutionResult::success(&task_snapshot, idx, output, start.elapsed())
+                    }
+                    Ok(Err(e)) => {
+                        TaskExecutionResult::failure(&task_snapshot, idx, e.to_string(), start.elapsed())
+                    }
+                    Err(_) => TaskExecutionResult::failure(
+                        &task_snapshot,
+                        idx,
+                        format!("timed out after {:?}", timeout_dur),
+                        start.elapsed(),
+                    ),
+                }
+            };
+
+            debate_futures.push(fut);
+        }
+
+        let debate_results = join_all(debate_futures).await;
+
+        for result in debate_results {
+            let idx = NodeIndex::new(result.node_index);
+
+            if result.outcome.is_success() {
+                let text = result
+                    .outcome
+                    .output()
+                    .expect("Success has output")
+                    .to_string();
+                dag.mark_complete_with_output(idx, Some(text));
+                succeeded += 1;
+            } else {
+                let err_msg = match &result.outcome {
+                    TaskOutcome::Failure(e) => e.clone(),
+                    _ => "debate task failed".to_string(),
+                };
+
+                dag.mark_failed(idx, err_msg);
+                failed += 1;
+
+                if self.config.failure_policy == FailurePolicy::FailFastCascade {
+                    let cascaded = dag.cascade_skip(judge_idx);
+                    skipped += cascaded;
+                    info!(cascaded, "cascaded skip to judge due to debate failure");
+                }
+            }
+
+            results.push(result);
+        }
+
+        // Phase 2: Execute judge task (synthesizes conclusion)
+        if !matches!(
+            dag.get_task(judge_idx)
+                .expect("judge task missing")
+                .status,
+            crate::swarm::SubtaskStatus::Skipped
+        ) {
+            dag.mark_running(judge_idx);
+            let judge_task = dag.get_task(judge_idx).expect("missing judge").clone();
+            let judge_id = judge_task.id.clone();
+
+            let start = Instant::now();
+            info!(task_id = %judge_id, "Executing judge (synthesis)");
+
+            let judge_outcome = timeout(
+                self.config.task_timeout,
+                executor(judge_idx, judge_task.clone()),
+            )
+            .await;
+            let elapsed = start.elapsed();
+
+            match judge_outcome {
+                Ok(Ok(output)) => {
+                    info!(task_id = %judge_id, elapsed_ms = elapsed.as_millis(), "Judge synthesized conclusion");
+                    dag.mark_complete_with_output(judge_idx, Some(output.clone()));
+                    results.push(TaskExecutionResult::success(
+                        &judge_task,
+                        judge_idx,
+                        output,
+                        elapsed,
+                    ));
+                    succeeded += 1;
+                }
+                Ok(Err(e)) => {
+                    error!(task_id = %judge_id, error = %e, "Judge failed");
+                    let err_str = e.to_string();
+                    dag.mark_failed(judge_idx, err_str.clone());
+                    results.push(TaskExecutionResult::failure(
+                        &judge_task,
+                        judge_idx,
+                        err_str,
+                        elapsed,
+                    ));
+                    failed += 1;
+                }
+                Err(_) => {
+                    let msg = format!("judge timed out after {:?}", self.config.task_timeout);
+                    error!(task_id = %judge_id, "{msg}");
+                    dag.mark_failed(judge_idx, msg.clone());
+                    results.push(TaskExecutionResult::failure(
+                        &judge_task,
+                        judge_idx,
+                        msg,
+                        elapsed,
+                    ));
+                    failed += 1;
+                }
+            }
+        }
+
+        Ok(SchedulerSummary {
+            pattern: CoordinationPattern::Debate,
+            total_tasks: total,
+            succeeded,
+            failed,
+            skipped,
+            total_wall_time: wall_start.elapsed(),
+            results,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,5 +1113,87 @@ mod tests {
         let summary = scheduler.execute(&mut dag, executor).await.unwrap();
         assert!(summary.is_fully_successful());
         assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_debate_scheduler_basic() {
+        let mut dag = SubtaskDAG::new("debate");
+        // Debate pattern: debaters + judge
+        let debater1_idx = dag.add_task(SwarmSubtask::new("debater1", "Argue position A"));
+        let debater2_idx = dag.add_task(SwarmSubtask::new("debater2", "Argue position B"));
+        let judge_idx = dag.add_task(SwarmSubtask::new("judge", "Synthesize conclusion"));
+
+        let exec_log = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let exec_log_clone = exec_log.clone();
+
+        let executor: SubtaskExecutorFn = Arc::new(move |_idx, task| {
+            let log = exec_log_clone.clone();
+            let task_id = task.id.clone();
+            Box::pin(async move {
+                sleep(Duration::from_millis(10)).await;
+                log.lock().await.push(task_id.clone());
+                Ok(format!("{} presented argument", task_id))
+            })
+        });
+
+        let scheduler = DebateScheduler::new();
+        let summary = scheduler.execute(&mut dag, executor).await.unwrap();
+
+        assert!(summary.is_fully_successful());
+        assert_eq!(summary.succeeded, 3);
+        assert_eq!(summary.pattern, CoordinationPattern::Debate);
+
+        let log = exec_log.lock().await;
+        assert_eq!(log.len(), 3);
+        
+        // Debaters should execute in parallel (either order), then judge
+        let judge_pos = log.iter().position(|x| x == "judge").unwrap();
+        assert!(judge_pos == 2, "Judge should execute last after debaters");
+    }
+
+    #[tokio::test]
+    async fn test_debate_scheduler_insufficient_agents() {
+        let mut dag = SubtaskDAG::new("debate");
+        dag.add_task(SwarmSubtask::new("a", "Task A"));
+        dag.add_task(SwarmSubtask::new("b", "Task B"));
+
+        let executor: SubtaskExecutorFn = Arc::new(move |_idx, _task| {
+            Box::pin(async move { Ok("ok".into()) })
+        });
+
+        let scheduler = DebateScheduler::new();
+        let result = scheduler.execute(&mut dag, executor).await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least 3 agents"));
+    }
+
+    #[tokio::test]
+    async fn test_debate_scheduler_debater_failure() {
+        let mut dag = SubtaskDAG::new("debate");
+        let debater_fail_idx = dag.add_task(SwarmSubtask::new("debater_bad", "Fail"));
+        let debater_ok_idx = dag.add_task(SwarmSubtask::new("debater_ok", "Success"));
+        let judge_idx = dag.add_task(SwarmSubtask::new("judge", "Synthesize"));
+
+        let executor: SubtaskExecutorFn = Arc::new(move |idx, task| {
+            let task_id = task.id.clone();
+            Box::pin(async move {
+                if idx == debater_fail_idx {
+                    Err(GlobalError::runtime("Debater failed to make argument"))
+                } else {
+                    Ok(format!("{} success", task_id))
+                }
+            })
+        });
+
+        let scheduler = DebateScheduler::new();
+        let summary = scheduler.execute(&mut dag, executor).await.unwrap();
+
+        // One failure (debater_bad), one success (debater_ok), judge should still run
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.succeeded, 2); // debater_ok + judge
     }
 }
