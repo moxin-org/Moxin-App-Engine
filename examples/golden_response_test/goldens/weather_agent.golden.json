@@ -1,0 +1,26 @@
+{
+  "test_name": "weather_agent",
+  "turns": [
+    {
+      "user_input": "What's the weather in Berlin?",
+      "response": "The temperature in Berlin is 22C.",
+      "tool_calls": [
+        {
+          "name": "weather_search",
+          "arguments": {
+            "city": "Berlin"
+          }
+        }
+      ]
+    },
+    {
+      "user_input": "Is it warm?",
+      "response": "Yes, 22C is considered warm for this time of year.",
+      "tool_calls": []
+    }
+  ],
+  "metadata": {
+    "created": "2026-04-09",
+    "model": "mock-model-v1"
+  }
+}

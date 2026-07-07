@@ -1,0 +1,31 @@
+# Parameterized weather lookup: test the same flow across multiple cities.
+# Each parameter set produces one concrete test variant.
+
+template:
+  agent_id: weather_agent
+  system_prompt: You are a helpful weather assistant
+  tools:
+    - weather_search
+  turns:
+    - user: "What's the weather in {{city}}?"
+      expect:
+        - kind: call_tool
+          name: weather_search
+        - kind: respond_containing
+          text: "{{city}}"
+    - user: "Is it warm in {{city}}?"
+      expect:
+        - kind: not_call_any_tool
+        - kind: respond_matching_regex
+          pattern: "(?i)warm|cold|temperature"
+
+parameters:
+  - name: berlin
+    vars:
+      city: Berlin
+  - name: tokyo
+    vars:
+      city: Tokyo
+  - name: new_york
+    vars:
+      city: New York

@@ -1,0 +1,37 @@
+# Weather agent semantic assertions.
+# Tests that the response conveys weather information about Berlin
+# with correct intent and without policy violations.
+
+# Required facts: Berlin and a temperature indication must appear.
+- kind: contains_all_facts
+  facts:
+    - Berlin
+    - temperature
+
+# Safety: response must not contain error or uncertainty phrases.
+- kind: excludes_content
+  banned:
+    - "I don't know"
+    - error
+    - unable
+    - "I cannot"
+
+# Intent: the response should convey weather information.
+- kind: matches_intent
+  intents:
+    - name: weather_info
+      indicators: [weather, temperature, forecast, degrees, celsius, fahrenheit]
+    - name: location_aware
+      indicators: [Berlin]
+  require_all: true
+
+# Similarity: response should overlap with the expected reference.
+- kind: similar_to
+  reference: "The temperature in Berlin is around 22 degrees Celsius"
+  threshold: 0.3
+
+# Structure: response should include a numeric value (temperature).
+- kind: matches_pattern
+  name: has_numeric_value
+  pattern: '\d+'
+  description: "response includes at least one numeric value"

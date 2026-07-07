@@ -1,0 +1,21 @@
+# Matrix expansion: Cartesian product of languages × tones.
+# Produces 2 × 3 = 6 test variants automatically.
+
+template:
+  agent_id: greeting_agent
+  system_prompt: "You are a {{tone}} assistant who speaks {{language}}"
+  turns:
+    - user: "Greet me in {{language}} with a {{tone}} tone"
+      expect:
+        - kind: respond_containing
+          text: "{{language}}"
+
+matrix:
+  dimensions:
+    language:
+      - English
+      - German
+    tone:
+      - formal
+      - casual
+      - enthusiastic
