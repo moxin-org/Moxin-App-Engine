@@ -39,6 +39,7 @@
 //! ```
 
 pub mod moderation;
+pub mod network;
 pub mod policy;
 pub mod rbac;
 pub mod redaction;
@@ -49,6 +50,7 @@ pub use moderation::{ContentModerator, PromptGuard};
 pub use policy::{PolicyBuilder, SecurityPolicy};
 pub use rbac::{AuthorizationResult, Authorizer};
 pub use redaction::{PiiDetector, PiiRedactor, RedactionAuditLog};
+pub use network::NetworkSecurity;
 pub use types::{
     ContentPolicy, ModerationCategory, ModerationVerdict, RedactionMatch, RedactionResult,
     RedactionStrategy, SecurityError, SecurityResult, SensitiveDataCategory,

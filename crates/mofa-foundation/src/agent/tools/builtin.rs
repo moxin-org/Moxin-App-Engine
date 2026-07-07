@@ -29,13 +29,23 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use mofa_kernel::agent::components::tool::{ToolInput, ToolMetadata, ToolResult};
 use serde_json::json;
+use std::sync::LazyLock;
 use tokio::io::AsyncWriteExt as _;
 
 use crate::agent::components::tool::{SimpleTool, ToolCategory};
+use mofa_kernel::security::network::NetworkSecurity;
 
 // ============================================================================
 // HttpTool
 // ============================================================================
+
+static HTTP_TOOL_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        // Avoid following redirects to internal/private networks.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build HttpTool HTTP client")
+});
 
 /// Make HTTP GET or POST requests and return the response body.
 ///
@@ -95,8 +105,14 @@ impl SimpleTool for HttpTool {
             None => return ToolResult::failure("missing required parameter: url"),
         };
 
+        if !NetworkSecurity::is_url_allowed(&url) {
+            return ToolResult::failure(format!(
+                "access denied: URL '{url}' targets a blocked address (private/internal network or disallowed scheme)"
+            ));
+        }
+
         let method = input.get_str("method").unwrap_or("GET").to_uppercase();
-        let client = reqwest::Client::new();
+        let client = &*HTTP_TOOL_CLIENT;
 
         let mut builder = match method.as_str() {
             "GET" => client.get(&url),

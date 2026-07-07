@@ -3,6 +3,7 @@
 //! Reliable webhook delivery with retries and HMAC signatures
 
 use crate::hitl::error::FoundationHitlError;
+use mofa_kernel::security::network::NetworkSecurity;
 use mofa_kernel::hitl::{ReviewRequest, ReviewRequestId};
 use serde_json::json;
 use std::sync::Arc;
@@ -55,6 +56,8 @@ impl WebhookDelivery {
     pub fn new(config: WebhookConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            // Avoid following redirects to internal/private networks.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to create HTTP client");
 
@@ -71,6 +74,13 @@ impl WebhookDelivery {
         review: &ReviewRequest,
         event_type: &str,
     ) -> Result<(), FoundationHitlError> {
+        if !NetworkSecurity::is_url_allowed(&self.config.url) {
+            return Err(FoundationHitlError::InvalidConfig(format!(
+                "Access denied: webhook URL '{}' targets a blocked address (private/internal network or disallowed scheme)",
+                self.config.url
+            )));
+        }
+
         let payload = self.create_payload(review, event_type)?;
         let signature = self.create_signature(&payload)?;
 

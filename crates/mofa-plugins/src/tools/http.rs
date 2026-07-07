@@ -1,8 +1,7 @@
 use super::*;
+use mofa_kernel::security::network::NetworkSecurity;
 use reqwest::Client;
 use serde_json::json;
-use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
-use url::Url;
 
 /// HTTP 请求工具 - 发送网络请求
 /// HTTP request utilities - Send network requests
@@ -70,92 +69,6 @@ impl HttpRequestTool {
         }
         &s[..end]
     }
-
-    /// Validate that a URL is safe to request (not targeting internal/private networks).
-    fn is_url_allowed(url_str: &str) -> bool {
-        let parsed = match Url::parse(url_str) {
-            Ok(u) => u,
-            Err(_) => return false,
-        };
-
-        // Only allow http and https schemes
-        match parsed.scheme() {
-            "http" | "https" => {}
-            _ => return false,
-        }
-
-        let host = match parsed.host_str() {
-            Some(h) => h,
-            None => return false,
-        };
-
-        // Block well-known dangerous hostnames
-        if host.eq_ignore_ascii_case("metadata.google.internal") {
-            return false;
-        }
-
-        // Resolve hostname and check all resulting IPs
-        let port = parsed
-            .port()
-            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-        let socket_addrs = format!("{}:{}", host, port);
-        let addrs: Vec<_> = match socket_addrs.to_socket_addrs() {
-            Ok(a) => a.collect(),
-            Err(_) => return false, // Deny if hostname cannot be resolved
-        };
-
-        if addrs.is_empty() {
-            return false; // Deny if no addresses resolved
-        }
-
-        for addr in addrs {
-            if Self::is_blocked_ip(&addr.ip()) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Check if an IP address is blocked for security reasons.
-    fn is_blocked_ip(ip: &IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                ipv4.is_private()
-                    || ipv4.is_loopback()
-                    || ipv4.is_unspecified()
-                    || ipv4.is_multicast()
-                    || ipv4.is_link_local()
-                    || ipv4.is_broadcast()
-                    || ipv4.is_documentation()
-                    || Self::is_cgnat_ipv4(*ipv4)
-            }
-            IpAddr::V6(ipv6) => {
-                // Handle IPv4-mapped IPv6 addresses, e.g. ::ffff:127.0.0.1.
-                if let Some(mapped) = ipv6.to_ipv4_mapped() {
-                    return Self::is_blocked_ip(&IpAddr::V4(mapped));
-                }
-
-                ipv6.is_loopback()
-                    || ipv6.is_unspecified()
-                    || ipv6.is_multicast()
-                    || ipv6.is_unique_local()
-                    || ipv6.is_unicast_link_local()
-                    || Self::is_documentation_ipv6(*ipv6)
-            }
-        }
-    }
-
-    fn is_cgnat_ipv4(ipv4: Ipv4Addr) -> bool {
-        let octets = ipv4.octets();
-        octets[0] == 100 && (64..=127).contains(&octets[1])
-    }
-
-    fn is_documentation_ipv6(ipv6: std::net::Ipv6Addr) -> bool {
-        let segments = ipv6.segments();
-        // 2001:db8::/32
-        segments[0] == 0x2001 && segments[1] == 0x0db8
-    }
 }
 
 #[async_trait::async_trait]
@@ -171,7 +84,7 @@ impl ToolExecutor for HttpRequestTool {
         })?;
 
         // Validate URL to prevent SSRF attacks
-        if !Self::is_url_allowed(url) {
+        if !NetworkSecurity::is_url_allowed(url) {
             return Err(mofa_kernel::plugin::PluginError::ExecutionFailed(format!(
                 "Access denied: URL '{}' targets a blocked address (private/internal network or disallowed scheme)",
                 url
@@ -278,29 +191,21 @@ mod tests {
         assert!(result.is_char_boundary(result.len()));
     }
 
-    #[test]
-    fn blocks_ipv4_mapped_loopback() {
-        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
-        assert!(HttpRequestTool::is_blocked_ip(&ip));
-    }
-
-    #[test]
-    fn blocks_localhost_url() {
-        assert!(!HttpRequestTool::is_url_allowed("http://127.0.0.1:8080/"));
-    }
-
-    #[test]
-    fn blocks_ipv4_mapped_loopback_url() {
-        assert!(!HttpRequestTool::is_url_allowed(
-            "http://[::ffff:127.0.0.1]:8080/"
-        ));
-    }
-
-    #[test]
-    fn blocks_metadata_hostname_case_insensitively() {
-        assert!(!HttpRequestTool::is_url_allowed(
-            "http://METADATA.GOOGLE.INTERNAL/"
-        ));
+    // This test checks if `HttpRequestTool` actually enforces the shared ssrf policy .
+    #[tokio::test]
+    async fn denies_blocked_url_via_execute() {
+        let tool = HttpRequestTool::new();
+        let err = tool
+            .execute(json!({
+                "method": "GET",
+                "url": "http://127.0.0.1:8080/"
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("access denied"),
+            "err={err:?}"
+        );
     }
 
     #[test]
