@@ -165,7 +165,7 @@ async fn display_log_file(
 /// Colorize log line based on log level
 fn colorize_log_line(line: &str) -> String {
     let upper = line.to_uppercase();
-    if upper.contains("ERROR") || upper.contains(" FATAL ") {
+    if upper.contains("ERROR") || upper.contains("FATAL") {
         line.red().to_string()
     } else if upper.contains("WARN") || upper.contains(" WARNING ") {
         line.yellow().to_string()
@@ -404,5 +404,11 @@ mod tests {
     fn test_colorize_log_line_dims_bracketed_trace_prefix() {
         let line = "[TRACE] module::op starting";
         assert_eq!(colorize_log_line(line), line.bright_black().to_string());
+    }
+
+    #[test]
+    fn test_colorize_log_line_colors_fatal_prefix_without_spaces() {
+        let line = "FATAL: process crashed";
+        assert_eq!(colorize_log_line(line), line.red().to_string());
     }
 }
