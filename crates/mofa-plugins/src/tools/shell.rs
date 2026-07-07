@@ -42,7 +42,7 @@ impl ShellCommandTool {
         }
     }
 
-    /// Create with default allowed commands
+    /// Create with default allowed commands (safe, read-only commands only)
     pub fn new_with_defaults() -> Self {
         Self::new(vec![
             "ls".to_string(),
@@ -50,12 +50,9 @@ impl ShellCommandTool {
             "echo".to_string(),
             "date".to_string(),
             "whoami".to_string(),
-            "cat".to_string(),
             "head".to_string(),
             "tail".to_string(),
             "wc".to_string(),
-            "grep".to_string(),
-            "find".to_string(),
         ])
     }
 
@@ -65,7 +62,51 @@ impl ShellCommandTool {
         }
         self.allowed_commands
             .iter()
-            .any(|allowed| command == allowed || command.starts_with(&format!("{} ", allowed)))
+            .any(|allowed| command == allowed)
+    }
+
+    /// Validate that command arguments don't contain dangerous flags or patterns.
+    fn validate_args(command: &str, args: &[String]) -> Result<(), String> {
+        // Dangerous argument flags that enable arbitrary command execution
+        const DANGEROUS_FLAGS: &[&str] = &[
+            "-exec",
+            "-execdir",
+            "--exec",
+            "-delete",
+            "-ok",
+            "-okdir",
+        ];
+
+        // Dangerous shell metacharacters in arguments
+        const DANGEROUS_PATTERNS: &[&str] = &[
+            "|", ";", "&&", "||", "`", "$(", "${",
+            ">", ">>", "<",
+        ];
+
+        for arg in args {
+            // Check for dangerous flags
+            let arg_lower = arg.to_lowercase();
+            for flag in DANGEROUS_FLAGS {
+                if arg_lower == *flag {
+                    return Err(format!(
+                        "Dangerous flag '{}' is not allowed for command '{}'",
+                        arg, command
+                    ));
+                }
+            }
+
+            // Check for shell metacharacters
+            for pattern in DANGEROUS_PATTERNS {
+                if arg.contains(pattern) {
+                    return Err(format!(
+                        "Argument '{}' contains dangerous shell metacharacter '{}'",
+                        arg, pattern
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -96,6 +137,14 @@ impl ToolExecutor for ShellCommandTool {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Validate arguments for dangerous flags and patterns
+        if let Err(reason) = Self::validate_args(command, &args) {
+            return Err(anyhow::anyhow!(
+                "Argument validation failed: {}",
+                reason
+            ));
+        }
 
         let mut cmd = Command::new(command);
         cmd.args(&args);
