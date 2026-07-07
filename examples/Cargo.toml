@@ -63,6 +63,7 @@ members = [
     "adversarial_testing_demo",
     "production_observability",
     "llm_fallback_chain",
+    "audio_config_probe",
     "resume_from_checkpoint",
     "claw_demo",
     "swarm_orchestrator",
