@@ -1,0 +1,76 @@
+name: Weekly Clippy Autofix
+
+on:
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: clippy-autofix
+  cancel-in-progress: true
+
+jobs:
+  clippy-autofix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Capture pre-fix clippy output
+        run: |
+          set +e
+          cargo clippy --workspace --all-features --message-format=short > clippy-before.txt 2>&1
+          exit 0
+
+      - name: Apply clippy auto-fixes
+        run: cargo clippy --fix --workspace --all-features --allow-dirty --allow-staged
+
+      - name: Apply rustfmt
+        run: cargo fmt --all
+
+      - name: Detect changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute date suffix
+        if: steps.changes.outputs.changed == 'true'
+        id: date
+        run: echo "stamp=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/clippy-autofix-${{ steps.date.outputs.stamp }}
+          delete-branch: true
+          commit-message: "chore(lint): apply automated cargo clippy fixes"
+          title: "chore(lint): weekly clippy autofix"
+          body: |
+            Automated clippy autofix run.
+
+            - Ran `cargo clippy --fix --workspace --all-features --allow-dirty --allow-staged`
+            - Ran `cargo fmt --all`
+            - Opened only because repository content changed
+
+            Pre-fix clippy output is available in workflow logs (`clippy-before.txt`).
+          labels: ci,lint
