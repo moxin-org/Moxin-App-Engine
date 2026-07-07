@@ -84,6 +84,66 @@ impl DeferredQueue {
                 best_idx = Some(i);
                 break; // oldest first
             }
+
+            #[test]
+            fn test_enqueue_full_returns_false() {
+                let mut q = DeferredQueue::new(2, 3);
+                assert!(q.enqueue(DeferredRequest::new("r1".into(), 100)));
+                assert!(q.enqueue(DeferredRequest::new("r2".into(), 100)));
+                assert!(!q.enqueue(DeferredRequest::new("r3".into(), 100)));
+                assert_eq!(q.len(), 2);
+            }
+
+            #[test]
+            fn test_dequeue_empty_returns_none() {
+                let mut q = DeferredQueue::new(10, 3);
+                let result = q.dequeue_oldest_fitting(1000);
+                assert!(result.is_none());
+            }
+
+            #[test]
+            fn test_drain_expired_multiple() {
+                let mut q = DeferredQueue::new(10, 2);
+                let mut req1 = DeferredRequest::new("r1".into(), 100);
+                let mut req2 = DeferredRequest::new("r2".into(), 100);
+                let mut req3 = DeferredRequest::new("r3".into(), 100);
+                req1.increment_retry();
+                req1.increment_retry(); // expired
+                req2.increment_retry(); // not expired (1)
+                req3.increment_retry();
+                req3.increment_retry(); // expired
+                q.enqueue(req1);
+                q.enqueue(req2);
+                q.enqueue(req3);
+
+                let expired = q.drain_expired();
+                assert_eq!(expired.len(), 2);
+                let ids: Vec<_> = expired.iter().map(|r| r.id.as_str()).collect();
+                assert!(ids.contains(&"r1"));
+                assert!(ids.contains(&"r3"));
+                assert_eq!(q.len(), 1);
+                assert_eq!(q.dequeue_oldest_fitting(1000).unwrap().id, "r2");
+            }
+
+            #[test]
+            fn test_dequeue_skips_all_max_retries_and_fits() {
+                // All requests are over max_retries, none should be dequeued
+                let mut q = DeferredQueue::new(10, 1);
+                let mut req = DeferredRequest::new("r1".into(), 100);
+                req.increment_retry();
+                q.enqueue(req);
+                assert!(q.dequeue_oldest_fitting(1000).is_none());
+            }
+
+            #[test]
+            fn test_wait_time_ms_increases() {
+                let req = DeferredRequest::new("r1".into(), 100);
+                let time1 = req.wait_time_ms();
+                // Sleep a tiny bit to ensure time passes
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                let time2 = req.wait_time_ms();
+                assert!(time2 >= time1);
+            }
         }
 
         best_idx.and_then(|i| self.queue.remove(i))
