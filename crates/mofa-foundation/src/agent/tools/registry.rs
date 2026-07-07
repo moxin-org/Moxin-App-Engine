@@ -256,8 +256,28 @@ impl ToolRegistry {
         self.plugin_loaders.insert(path.into(), Arc::new(loader));
     }
 
-    /// 热加载插件 (TODO: 实际插件系统实现)
-    /// Hot reload plugin
+    /// Hot reload tools from a registered plugin path.
+    ///
+    /// The reload flow is transactional:
+    /// 1. Resolve the plugin loader registered for `path`.
+    /// 2. Remove all tools previously loaded from that plugin path.
+    /// 3. Load tools from the plugin loader.
+    /// 4. Re-register loaded tools with `ToolSource::Plugin`.
+    ///
+    /// If loading fails, or if any reloaded tool name collides with an
+    /// existing source, the registry is rolled back to its original state.
+    ///
+    /// # Parameters
+    /// - `path`: Plugin identifier/path used when registering the loader.
+    ///
+    /// # Returns
+    /// Returns the list of tool names that were reloaded.
+    ///
+    /// # Errors
+    /// - [`AgentError::NotFound`] if no loader is registered for `path`.
+    /// - Loader-provided errors if plugin loading fails.
+    /// - [`AgentError::RegistrationFailed`] if a reloaded tool name conflicts
+    ///   with an existing tool.
     pub async fn hot_reload_plugin(&mut self, path: &str) -> AgentResult<Vec<String>> {
         let loader = self.plugin_loaders.get(path).cloned().ok_or_else(|| {
             AgentError::NotFound(format!("Plugin loader not registered for path: {path}"))
