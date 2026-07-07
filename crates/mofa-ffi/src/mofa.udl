@@ -122,6 +122,65 @@ dictionary SessionMessageInfo {
 // Tool System Types
 // ============================================================================
 
+enum ToolValueKind {
+    "Null",
+    "Bool",
+    "Int",
+    "Float",
+    "String",
+    "List",
+    "Object",
+};
+
+dictionary ToolObjectEntry {
+    string key;
+    ToolValue value;
+};
+
+dictionary ToolValue {
+    ToolValueKind kind;
+    boolean? bool_value;
+    i64? int_value;
+    double? float_value;
+    string? string_value;
+    sequence<ToolValue>? list_value;
+    sequence<ToolObjectEntry>? object_entries;
+};
+
+enum ToolSchemaFormat {
+    "JsonSchema",
+};
+
+dictionary TypedToolSchema {
+    ToolSchemaFormat format;
+    ToolValue schema;
+};
+
+dictionary TypedToolInput {
+    ToolValue arguments;
+    string? raw_input;
+};
+
+enum FfiToolErrorKind {
+    "Validation",
+    "Execution",
+    "Serialization",
+    "Unknown",
+};
+
+dictionary FfiToolError {
+    FfiToolErrorKind kind;
+    string message;
+};
+
+dictionary TypedFfiToolResult {
+    boolean success;
+    ToolValue? output;
+    FfiToolError? error;
+};
+
+// Legacy description of a registered tool.
+// Prefer `TypedToolInfo` for new bindings.
 // Description of a registered tool
 dictionary ToolInfo {
     string name;
@@ -129,6 +188,15 @@ dictionary ToolInfo {
     string parameters_schema_json;
 };
 
+// Typed description of a registered tool for new bindings.
+dictionary TypedToolInfo {
+    string name;
+    string description;
+    TypedToolSchema parameters_schema;
+};
+
+// Legacy JSON-string tool result.
+// Prefer `TypedFfiToolResult` for new bindings.
 // Result from executing a tool
 dictionary FfiToolResult {
     boolean success;
@@ -144,6 +212,15 @@ callback interface FfiToolCallback {
     string description();
     string parameters_schema_json();
     FfiToolResult execute(string arguments_json);
+};
+
+// Typed callback interface for foreign-language tool implementations.
+// New bindings should prefer this over `FfiToolCallback`.
+callback interface TypedFfiToolCallback {
+    string name();
+    string description();
+    TypedToolSchema parameters_schema();
+    TypedFfiToolResult execute(TypedToolInput input);
 };
 
 // ============================================================================
@@ -308,16 +385,23 @@ interface ToolRegistry {
     // Create a new empty tool registry
     constructor();
 
-    // Register a foreign-language tool via callback
+    // Register a legacy JSON-string foreign-language tool via callback
     [Throws=MoFaError]
     void register_tool(FfiToolCallback tool);
+
+    // Register a typed foreign-language tool via callback
+    [Throws=MoFaError]
+    void register_typed_tool(TypedFfiToolCallback tool);
 
     // Unregister a tool by name
     [Throws=MoFaError]
     boolean unregister_tool(string name);
 
-    // List all registered tools
+    // List all registered tools through the legacy JSON-string contract
     sequence<ToolInfo> list_tools();
+
+    // List all registered tools through the typed contract
+    sequence<TypedToolInfo> list_typed_tools();
 
     // Get tool names
     sequence<string> list_tool_names();
@@ -328,7 +412,11 @@ interface ToolRegistry {
     // Get the number of registered tools
     u32 tool_count();
 
-    // Execute a tool by name with JSON arguments
+    // Execute a tool by name with JSON arguments (legacy path)
     [Throws=MoFaError]
     FfiToolResult execute_tool(string name, string arguments_json);
+
+    // Execute a tool by name through the typed contract
+    [Throws=MoFaError]
+    TypedFfiToolResult execute_typed_tool(string name, TypedToolInput input);
 };

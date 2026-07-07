@@ -78,6 +78,24 @@ mofa-sdk (Standard API)
 mofa-runtime, mofa-foundation, mofa-kernel
 ```
 
+## Typed Tool FFI Contracts
+
+The UniFFI tool bridge now supports two tool callback styles:
+
+- `FfiToolCallback`: legacy JSON-string contract
+- `TypedFfiToolCallback`: preferred typed contract for new bindings
+
+For new cross-language tools, prefer the typed path:
+
+- register tools with `register_typed_tool(...)`
+- inspect tool metadata with `list_typed_tools()`
+- execute tools with `execute_typed_tool(...)`
+
+The legacy JSON-string contract remains available for backward compatibility,
+but it should be treated as transitional. New bindings should prefer the typed
+tool contract so invalid payloads produce structured errors instead of silently
+falling back to string outputs.
+
 ## License
 
 Apache-2.0

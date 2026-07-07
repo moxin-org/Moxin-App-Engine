@@ -251,7 +251,275 @@ pub struct SessionMessageInfo {
 // Tool System Types
 // =============================================================================
 
-/// Tool description for listing
+/// Typed FFI value kind for tool schemas, arguments, and outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolValueKind {
+    Null,
+    Bool,
+    Int,
+    Float,
+    String,
+    List,
+    Object,
+}
+
+/// Object entry for a typed FFI value.
+#[derive(Debug, Clone)]
+pub struct ToolObjectEntry {
+    pub key: String,
+    pub value: ToolValue,
+}
+
+/// Typed FFI value used across the UniFFI tool contract.
+#[derive(Debug, Clone)]
+pub struct ToolValue {
+    pub kind: ToolValueKind,
+    pub bool_value: Option<bool>,
+    pub int_value: Option<i64>,
+    pub float_value: Option<f64>,
+    pub string_value: Option<String>,
+    pub list_value: Option<Vec<ToolValue>>,
+    pub object_entries: Option<Vec<ToolObjectEntry>>,
+}
+
+impl ToolValue {
+    fn null() -> Self {
+        Self {
+            kind: ToolValueKind::Null,
+            bool_value: None,
+            int_value: None,
+            float_value: None,
+            string_value: None,
+            list_value: None,
+            object_entries: None,
+        }
+    }
+
+    fn from_json_value(value: serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => Self::null(),
+            serde_json::Value::Bool(v) => Self {
+                kind: ToolValueKind::Bool,
+                bool_value: Some(v),
+                int_value: None,
+                float_value: None,
+                string_value: None,
+                list_value: None,
+                object_entries: None,
+            },
+            serde_json::Value::Number(v) => {
+                if let Some(i) = v.as_i64() {
+                    Self {
+                        kind: ToolValueKind::Int,
+                        bool_value: None,
+                        int_value: Some(i),
+                        float_value: None,
+                        string_value: None,
+                        list_value: None,
+                        object_entries: None,
+                    }
+                } else if let Some(u) = v.as_u64() {
+                    if let Ok(i) = i64::try_from(u) {
+                        Self {
+                            kind: ToolValueKind::Int,
+                            bool_value: None,
+                            int_value: Some(i),
+                            float_value: None,
+                            string_value: None,
+                            list_value: None,
+                            object_entries: None,
+                        }
+                    } else {
+                        Self {
+                            kind: ToolValueKind::Float,
+                            bool_value: None,
+                            int_value: None,
+                            float_value: Some(u as f64),
+                            string_value: None,
+                            list_value: None,
+                            object_entries: None,
+                        }
+                    }
+                } else {
+                    Self {
+                        kind: ToolValueKind::Float,
+                        bool_value: None,
+                        int_value: None,
+                        float_value: v.as_f64(),
+                        string_value: None,
+                        list_value: None,
+                        object_entries: None,
+                    }
+                }
+            }
+            serde_json::Value::String(v) => Self {
+                kind: ToolValueKind::String,
+                bool_value: None,
+                int_value: None,
+                float_value: None,
+                string_value: Some(v),
+                list_value: None,
+                object_entries: None,
+            },
+            serde_json::Value::Array(values) => Self {
+                kind: ToolValueKind::List,
+                bool_value: None,
+                int_value: None,
+                float_value: None,
+                string_value: None,
+                list_value: Some(values.into_iter().map(Self::from_json_value).collect()),
+                object_entries: None,
+            },
+            serde_json::Value::Object(values) => Self {
+                kind: ToolValueKind::Object,
+                bool_value: None,
+                int_value: None,
+                float_value: None,
+                string_value: None,
+                list_value: None,
+                object_entries: Some(
+                    values
+                        .into_iter()
+                        .map(|(key, value)| ToolObjectEntry {
+                            key,
+                            value: Self::from_json_value(value),
+                        })
+                        .collect(),
+                ),
+            },
+        }
+    }
+
+    fn to_json_value(&self) -> MoFaResult<serde_json::Value> {
+        match self.kind {
+            ToolValueKind::Null => Ok(serde_json::Value::Null),
+            ToolValueKind::Bool => self.bool_value.map(serde_json::Value::Bool).ok_or_else(|| {
+                MoFaError::InvalidArgument("ToolValue.bool_value is required".to_string())
+            }),
+            ToolValueKind::Int => self.int_value.map(serde_json::Value::from).ok_or_else(|| {
+                MoFaError::InvalidArgument("ToolValue.int_value is required".to_string())
+            }),
+            ToolValueKind::Float => {
+                let value = self.float_value.ok_or_else(|| {
+                    MoFaError::InvalidArgument("ToolValue.float_value is required".to_string())
+                })?;
+                let number = serde_json::Number::from_f64(value).ok_or_else(|| {
+                    MoFaError::InvalidArgument(format!(
+                        "ToolValue.float_value must be finite, got {}",
+                        value
+                    ))
+                })?;
+                Ok(serde_json::Value::Number(number))
+            }
+            ToolValueKind::String => self
+                .string_value
+                .clone()
+                .map(serde_json::Value::String)
+                .ok_or_else(|| {
+                    MoFaError::InvalidArgument("ToolValue.string_value is required".to_string())
+                }),
+            ToolValueKind::List => {
+                let values = self.list_value.as_ref().ok_or_else(|| {
+                    MoFaError::InvalidArgument("ToolValue.list_value is required".to_string())
+                })?;
+                Ok(serde_json::Value::Array(
+                    values
+                        .iter()
+                        .map(|value| value.to_json_value())
+                        .collect::<Result<Vec<_>, _>>()?,
+                ))
+            }
+            ToolValueKind::Object => {
+                let entries = self.object_entries.as_ref().ok_or_else(|| {
+                    MoFaError::InvalidArgument("ToolValue.object_entries is required".to_string())
+                })?;
+                let mut map = serde_json::Map::with_capacity(entries.len());
+                for entry in entries {
+                    map.insert(entry.key.clone(), entry.value.to_json_value()?);
+                }
+                Ok(serde_json::Value::Object(map))
+            }
+        }
+    }
+}
+
+/// Typed schema format for tool descriptors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSchemaFormat {
+    JsonSchema,
+}
+
+/// Typed schema descriptor for foreign-language tools.
+#[derive(Debug, Clone)]
+pub struct TypedToolSchema {
+    pub format: ToolSchemaFormat,
+    pub schema: ToolValue,
+}
+
+/// Typed tool input wrapper for foreign-language tools.
+#[derive(Debug, Clone)]
+pub struct TypedToolInput {
+    pub arguments: ToolValue,
+    pub raw_input: Option<String>,
+}
+
+/// Structured error kind for typed FFI tool execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiToolErrorKind {
+    Validation,
+    Execution,
+    Serialization,
+    Unknown,
+}
+
+/// Structured error payload for typed FFI tool execution.
+#[derive(Debug, Clone)]
+pub struct FfiToolError {
+    pub kind: FfiToolErrorKind,
+    pub message: String,
+}
+
+impl FfiToolError {
+    fn validation(message: impl Into<String>) -> Self {
+        Self {
+            kind: FfiToolErrorKind::Validation,
+            message: message.into(),
+        }
+    }
+
+    fn execution(message: impl Into<String>) -> Self {
+        Self {
+            kind: FfiToolErrorKind::Execution,
+            message: message.into(),
+        }
+    }
+}
+
+fn normalize_typed_tool_result(result: TypedFfiToolResult) -> TypedFfiToolResult {
+    if result.success && result.output.is_none() {
+        TypedFfiToolResult {
+            success: false,
+            output: None,
+            error: Some(FfiToolError {
+                kind: FfiToolErrorKind::Validation,
+                message: "Typed FFI tool reported success without an output payload".to_string(),
+            }),
+        }
+    } else if !result.success && result.error.is_none() {
+        TypedFfiToolResult {
+            success: false,
+            output: None,
+            error: Some(FfiToolError {
+                kind: FfiToolErrorKind::Unknown,
+                message: "Typed FFI tool failed without an error payload".to_string(),
+            }),
+        }
+    } else {
+        result
+    }
+}
+
+/// Tool description for listing through the legacy JSON-string contract.
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
     pub name: String,
@@ -259,7 +527,15 @@ pub struct ToolInfo {
     pub parameters_schema_json: String,
 }
 
-/// FFI tool execution result
+/// Tool description for listing through the typed FFI contract.
+#[derive(Debug, Clone)]
+pub struct TypedToolInfo {
+    pub name: String,
+    pub description: String,
+    pub parameters_schema: TypedToolSchema,
+}
+
+/// FFI tool execution result for the legacy JSON-string contract.
 #[derive(Debug, Clone)]
 pub struct FfiToolResult {
     pub success: bool,
@@ -267,12 +543,29 @@ pub struct FfiToolResult {
     pub error: Option<String>,
 }
 
-/// Callback interface for foreign-language tool implementations
+/// Typed FFI tool execution result.
+#[derive(Debug, Clone)]
+pub struct TypedFfiToolResult {
+    pub success: bool,
+    pub output: Option<ToolValue>,
+    pub error: Option<FfiToolError>,
+}
+
+/// Callback interface for foreign-language tool implementations.
+/// This is the legacy JSON-string contract kept for backward compatibility.
 pub trait FfiToolCallback: Send + Sync {
     fn name(&self) -> String;
     fn description(&self) -> String;
     fn parameters_schema_json(&self) -> String;
     fn execute(&self, arguments_json: String) -> FfiToolResult;
+}
+
+/// Typed callback interface for foreign-language tool implementations.
+pub trait TypedFfiToolCallback: Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn parameters_schema(&self) -> TypedToolSchema;
+    fn execute(&self, input: TypedToolInput) -> TypedFfiToolResult;
 }
 
 // =============================================================================
@@ -979,6 +1272,25 @@ impl CallbackToolAdapter {
     }
 }
 
+/// Adapter that wraps a typed foreign callback into the kernel Tool trait.
+struct TypedCallbackToolAdapter {
+    callback: Arc<dyn TypedFfiToolCallback>,
+    cached_name: String,
+    cached_description: String,
+}
+
+impl TypedCallbackToolAdapter {
+    fn new(callback: Arc<dyn TypedFfiToolCallback>) -> Self {
+        let cached_name = callback.name();
+        let cached_description = callback.description();
+        Self {
+            callback,
+            cached_name,
+            cached_description,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl mofa_kernel::agent::components::tool::Tool for CallbackToolAdapter {
     fn name(&self) -> &str {
@@ -1016,9 +1328,62 @@ impl mofa_kernel::agent::components::tool::Tool for CallbackToolAdapter {
     }
 }
 
+#[async_trait::async_trait]
+impl mofa_kernel::agent::components::tool::Tool for TypedCallbackToolAdapter {
+    fn name(&self) -> &str {
+        &self.cached_name
+    }
+
+    fn description(&self) -> &str {
+        &self.cached_description
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        let schema = self.callback.parameters_schema();
+        match schema.schema.to_json_value() {
+            Ok(value) => value,
+            Err(_) => serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    async fn execute(
+        &self,
+        input: mofa_kernel::agent::components::tool::ToolInput,
+        _ctx: &mofa_kernel::agent::context::AgentContext,
+    ) -> mofa_kernel::agent::components::tool::ToolResult {
+        let typed_input = TypedToolInput {
+            arguments: ToolValue::from_json_value(input.arguments),
+            raw_input: input.raw_input,
+        };
+        let result = normalize_typed_tool_result(self.callback.execute(typed_input));
+
+        if result.success {
+            match result.output {
+                Some(output) => match output.to_json_value() {
+                    Ok(value) => mofa_kernel::agent::components::tool::ToolResult::success(value),
+                    Err(err) => {
+                        mofa_kernel::agent::components::tool::ToolResult::failure(err.to_string())
+                    }
+                },
+                None => mofa_kernel::agent::components::tool::ToolResult::failure(
+                    "Typed FFI tool reported success without an output payload",
+                ),
+            }
+        } else {
+            mofa_kernel::agent::components::tool::ToolResult::failure(
+                result
+                    .error
+                    .map(|err| err.message)
+                    .unwrap_or_else(|| "Unknown typed tool error".to_string()),
+            )
+        }
+    }
+}
+
 /// Registry for managing tools that agents can invoke
 pub struct ToolRegistry {
     inner: StdMutex<mofa_foundation::agent::components::tool::SimpleToolRegistry>,
+    typed_callbacks: StdMutex<HashMap<String, Arc<dyn TypedFfiToolCallback>>>,
 }
 
 impl Default for ToolRegistry {
@@ -1034,29 +1399,52 @@ impl ToolRegistry {
             inner: StdMutex::new(
                 mofa_foundation::agent::components::tool::SimpleToolRegistry::new(),
             ),
+            typed_callbacks: StdMutex::new(HashMap::new()),
         }
     }
 
-    /// Register a foreign-language tool via callback
+    /// Register a foreign-language tool via the legacy JSON-string callback contract.
     pub fn register_tool(&self, tool: Box<dyn FfiToolCallback>) -> Result<(), MoFaError> {
         use mofa_kernel::agent::components::tool::{ToolExt, ToolRegistry as _};
         let adapter = CallbackToolAdapter::new(tool);
+        let tool_name = adapter.cached_name.clone();
         let tool_arc = adapter.into_dynamic();
-        self.inner
+        self.inner.lock().unwrap().register(tool_arc).map_err(
+            |e: mofa_kernel::agent::error::AgentError| MoFaError::ToolError(e.to_string()),
+        )?;
+        self.typed_callbacks.lock().unwrap().remove(&tool_name);
+        Ok(())
+    }
+
+    /// Register a foreign-language tool via the typed callback contract.
+    pub fn register_typed_tool(
+        &self,
+        tool: Box<dyn TypedFfiToolCallback>,
+    ) -> Result<(), MoFaError> {
+        use mofa_kernel::agent::components::tool::{ToolExt, ToolRegistry as _};
+        let callback: Arc<dyn TypedFfiToolCallback> = Arc::from(tool);
+        let adapter = TypedCallbackToolAdapter::new(callback.clone());
+        let tool_arc = adapter.into_dynamic();
+        self.inner.lock().unwrap().register(tool_arc).map_err(
+            |e: mofa_kernel::agent::error::AgentError| MoFaError::ToolError(e.to_string()),
+        )?;
+        self.typed_callbacks
             .lock()
             .unwrap()
-            .register(tool_arc)
-            .map_err(|e: mofa_kernel::agent::error::AgentError| MoFaError::ToolError(e.to_string()))
+            .insert(callback.name(), callback);
+        Ok(())
     }
 
     /// Unregister a tool by name
     pub fn unregister_tool(&self, name: String) -> Result<bool, MoFaError> {
         use mofa_kernel::agent::components::tool::ToolRegistry as _;
-        self.inner
-            .lock()
-            .unwrap()
-            .unregister(&name)
-            .map_err(|e: mofa_kernel::agent::error::AgentError| MoFaError::ToolError(e.to_string()))
+        let removed = self.inner.lock().unwrap().unregister(&name).map_err(
+            |e: mofa_kernel::agent::error::AgentError| MoFaError::ToolError(e.to_string()),
+        )?;
+        if removed {
+            self.typed_callbacks.lock().unwrap().remove(&name);
+        }
+        Ok(removed)
     }
 
     /// List all registered tools
@@ -1071,6 +1459,25 @@ impl ToolRegistry {
                 name: desc.name,
                 description: desc.description,
                 parameters_schema_json: desc.parameters_schema.to_string(),
+            })
+            .collect()
+    }
+
+    /// List all registered tools through the typed FFI contract.
+    pub fn list_typed_tools(&self) -> Vec<TypedToolInfo> {
+        use mofa_kernel::agent::components::tool::ToolRegistry as _;
+        self.inner
+            .lock()
+            .unwrap()
+            .list()
+            .into_iter()
+            .map(|desc| TypedToolInfo {
+                name: desc.name,
+                description: desc.description,
+                parameters_schema: TypedToolSchema {
+                    format: ToolSchemaFormat::JsonSchema,
+                    schema: ToolValue::from_json_value(desc.parameters_schema),
+                },
             })
             .collect()
     }
@@ -1129,11 +1536,183 @@ impl ToolRegistry {
             }),
         }
     }
+
+    /// Execute a tool by name through the typed FFI contract.
+    pub fn execute_typed_tool(
+        &self,
+        name: String,
+        input: TypedToolInput,
+    ) -> Result<TypedFfiToolResult, MoFaError> {
+        if let Some(callback) = self.typed_callbacks.lock().unwrap().get(&name).cloned() {
+            return Ok(normalize_typed_tool_result(callback.execute(input)));
+        }
+
+        use mofa_kernel::agent::components::tool::ToolRegistry as _;
+
+        let registry = self.inner.lock().unwrap();
+        let tool = registry
+            .get(&name)
+            .ok_or_else(|| MoFaError::ToolError(format!("Tool not found: {}", name)))?;
+
+        let arguments = match input.arguments.to_json_value() {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(TypedFfiToolResult {
+                    success: false,
+                    output: None,
+                    error: Some(FfiToolError::validation(format!(
+                        "Invalid typed tool arguments: {}",
+                        err
+                    ))),
+                });
+            }
+        };
+
+        let runtime =
+            tokio::runtime::Runtime::new().map_err(|e| MoFaError::RuntimeError(e.to_string()))?;
+
+        let ctx = mofa_kernel::agent::context::AgentContext::new("ffi-execution");
+        let result = runtime.block_on(tool.execute_dynamic(arguments, &ctx));
+
+        match result {
+            Ok(output) => Ok(TypedFfiToolResult {
+                success: true,
+                output: Some(ToolValue::from_json_value(output)),
+                error: None,
+            }),
+            Err(e) => Ok(TypedFfiToolResult {
+                success: false,
+                output: None,
+                error: Some(FfiToolError::execution(e.to_string())),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct EchoTypedTool;
+
+    struct SuccessWithoutOutputTypedTool;
+
+    struct FailureWithoutErrorTypedTool;
+
+    struct EchoLegacyTool;
+
+    impl TypedFfiToolCallback for EchoTypedTool {
+        fn name(&self) -> String {
+            "echo_typed".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Echo typed payload".to_string()
+        }
+
+        fn parameters_schema(&self) -> TypedToolSchema {
+            TypedToolSchema {
+                format: ToolSchemaFormat::JsonSchema,
+                schema: ToolValue::from_json_value(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "message": { "type": "string" }
+                    },
+                    "required": ["message"]
+                })),
+            }
+        }
+
+        fn execute(&self, input: TypedToolInput) -> TypedFfiToolResult {
+            TypedFfiToolResult {
+                success: true,
+                output: Some(input.arguments),
+                error: None,
+            }
+        }
+    }
+
+    impl TypedFfiToolCallback for SuccessWithoutOutputTypedTool {
+        fn name(&self) -> String {
+            "success_without_output".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Returns success without output".to_string()
+        }
+
+        fn parameters_schema(&self) -> TypedToolSchema {
+            TypedToolSchema {
+                format: ToolSchemaFormat::JsonSchema,
+                schema: ToolValue::from_json_value(serde_json::json!({
+                    "type": "object"
+                })),
+            }
+        }
+
+        fn execute(&self, _input: TypedToolInput) -> TypedFfiToolResult {
+            TypedFfiToolResult {
+                success: true,
+                output: None,
+                error: None,
+            }
+        }
+    }
+
+    impl TypedFfiToolCallback for FailureWithoutErrorTypedTool {
+        fn name(&self) -> String {
+            "failure_without_error".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Returns failure without an error payload".to_string()
+        }
+
+        fn parameters_schema(&self) -> TypedToolSchema {
+            TypedToolSchema {
+                format: ToolSchemaFormat::JsonSchema,
+                schema: ToolValue::from_json_value(serde_json::json!({
+                    "type": "object"
+                })),
+            }
+        }
+
+        fn execute(&self, _input: TypedToolInput) -> TypedFfiToolResult {
+            TypedFfiToolResult {
+                success: false,
+                output: None,
+                error: None,
+            }
+        }
+    }
+
+    impl FfiToolCallback for EchoLegacyTool {
+        fn name(&self) -> String {
+            "echo_legacy".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Echo legacy JSON payload".to_string()
+        }
+
+        fn parameters_schema_json(&self) -> String {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string" }
+                }
+            })
+            .to_string()
+        }
+
+        fn execute(&self, arguments_json: String) -> FfiToolResult {
+            FfiToolResult {
+                success: true,
+                output_json: arguments_json,
+                error: None,
+            }
+        }
+    }
 
     #[test]
     fn get_last_output_returns_explicit_runtime_error() {
@@ -1175,11 +1754,175 @@ mod tests {
             "[Throws=MoFaError, Name=from_config_file]",
             "[Throws=MoFaError, Name=from_config]",
             "LLMAgentBuilder set_openai_provider(",
+            "dictionary ToolValue",
+            "callback interface TypedFfiToolCallback",
+            "void register_typed_tool(TypedFfiToolCallback tool);",
+            "sequence<TypedToolInfo> list_typed_tools();",
+            "TypedFfiToolResult execute_typed_tool(string name, TypedToolInput input);",
         ] {
             assert!(
                 udl.contains(required),
                 "missing required UDL contract marker: {required}"
             );
         }
+    }
+
+    #[test]
+    fn tool_value_roundtrip_preserves_nested_json() {
+        let json = serde_json::json!({
+            "message": "hello",
+            "count": 3,
+            "flags": [true, false],
+            "meta": {
+                "nested": "value"
+            }
+        });
+
+        let value = ToolValue::from_json_value(json.clone());
+        let roundtrip = value.to_json_value().expect("tool value should roundtrip");
+
+        assert_eq!(roundtrip, json);
+    }
+
+    #[test]
+    fn execute_typed_tool_uses_typed_contract_end_to_end() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_typed_tool(Box::new(EchoTypedTool))
+            .expect("typed tool should register");
+
+        let tools = registry.list_typed_tools();
+        assert!(tools.iter().any(|tool| tool.name == "echo_typed"));
+
+        let input = TypedToolInput {
+            arguments: ToolValue::from_json_value(serde_json::json!({
+                "message": "hello"
+            })),
+            raw_input: Some("hello".to_string()),
+        };
+
+        let result = registry
+            .execute_typed_tool("echo_typed".to_string(), input)
+            .expect("typed execution should succeed");
+
+        assert!(result.success);
+        let output = result
+            .output
+            .as_ref()
+            .expect("typed tool should return an output");
+        let output_json = output
+            .to_json_value()
+            .expect("output should convert to json");
+        assert_eq!(output_json, serde_json::json!({ "message": "hello" }));
+    }
+
+    #[test]
+    fn execute_typed_tool_normalizes_success_without_output() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_typed_tool(Box::new(SuccessWithoutOutputTypedTool))
+            .expect("typed tool should register");
+
+        let result = registry
+            .execute_typed_tool(
+                "success_without_output".to_string(),
+                TypedToolInput {
+                    arguments: ToolValue::from_json_value(serde_json::json!({})),
+                    raw_input: None,
+                },
+            )
+            .expect("typed execution should return a normalized result");
+
+        assert!(!result.success);
+        let error = result
+            .error
+            .expect("normalized result should contain error");
+        assert_eq!(error.kind, FfiToolErrorKind::Validation);
+        assert!(error.message.contains("without an output payload"));
+    }
+
+    #[test]
+    fn execute_typed_tool_normalizes_failure_without_error() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_typed_tool(Box::new(FailureWithoutErrorTypedTool))
+            .expect("typed tool should register");
+
+        let result = registry
+            .execute_typed_tool(
+                "failure_without_error".to_string(),
+                TypedToolInput {
+                    arguments: ToolValue::from_json_value(serde_json::json!({})),
+                    raw_input: None,
+                },
+            )
+            .expect("typed execution should return a normalized result");
+
+        assert!(!result.success);
+        let error = result
+            .error
+            .expect("normalized result should contain error");
+        assert_eq!(error.kind, FfiToolErrorKind::Unknown);
+        assert!(error.message.contains("without an error payload"));
+    }
+
+    #[test]
+    fn execute_typed_tool_rejects_invalid_typed_arguments() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_tool(Box::new(EchoLegacyTool))
+            .expect("legacy tool should register");
+
+        let result = registry
+            .execute_typed_tool(
+                "echo_legacy".to_string(),
+                TypedToolInput {
+                    arguments: ToolValue {
+                        kind: ToolValueKind::Object,
+                        bool_value: None,
+                        int_value: None,
+                        float_value: None,
+                        string_value: None,
+                        list_value: None,
+                        object_entries: None,
+                    },
+                    raw_input: None,
+                },
+            )
+            .expect("typed execution should return a validation result");
+
+        assert!(!result.success);
+        let error = result
+            .error
+            .expect("invalid typed args should report error");
+        assert_eq!(error.kind, FfiToolErrorKind::Validation);
+        assert!(error.message.contains("Invalid typed tool arguments"));
+    }
+
+    #[test]
+    fn unregister_tool_removes_typed_callback_execution_path() {
+        let registry = ToolRegistry::new();
+        registry
+            .register_typed_tool(Box::new(EchoTypedTool))
+            .expect("typed tool should register");
+
+        let removed = registry
+            .unregister_tool("echo_typed".to_string())
+            .expect("unregister should succeed");
+        assert!(removed);
+
+        let err = registry
+            .execute_typed_tool(
+                "echo_typed".to_string(),
+                TypedToolInput {
+                    arguments: ToolValue::from_json_value(serde_json::json!({
+                        "message": "hello"
+                    })),
+                    raw_input: None,
+                },
+            )
+            .expect_err("unregistered typed tool should not execute");
+
+        assert!(err.to_string().contains("Tool not found"));
     }
 }
