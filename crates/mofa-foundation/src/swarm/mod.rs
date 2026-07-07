@@ -15,7 +15,7 @@ pub use hitl_gate::{HITLDecision, HITLGateMetrics, HITLNotifier, SwarmHITLGate};
 pub use patterns::CoordinationPattern;
 pub mod scheduler;
 pub use scheduler::{
-    FailurePolicy, ParallelScheduler, SchedulerSummary, SequentialScheduler, SubtaskExecutorFn,
+    FailurePolicy, ParallelScheduler, DebateScheduler, ConsensusScheduler, SchedulerSummary, SequentialScheduler, SubtaskExecutorFn,
     SwarmScheduler, SwarmSchedulerConfig, TaskExecutionResult, TaskOutcome,
 };
 pub use telemetry::{audit_batch_to_debug, audit_to_debug};

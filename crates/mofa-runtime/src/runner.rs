@@ -995,14 +995,16 @@ mod tests {
         }
     }
 
-    fn every_second_cron_expression() -> String {
+    fn every_second_cron_expression() -> AgentResult<String> {
         for expression in ["*/1 * * * * * *", "*/1 * * * * *"] {
             if Schedule::from_str(expression).is_ok() {
-                return expression.to_string();
+                return Ok(expression.to_string());
             }
         }
 
-        panic!("No supported every-second cron expression format found");
+        Err(AgentError::ValidationFailed(
+            "No supported every-second cron expression format found".to_string(),
+        ))
     }
 
     fn parse_elapsed_ms(output: &AgentOutput) -> u128 {
@@ -1134,7 +1136,7 @@ mod tests {
     async fn test_agent_runner_run_periodic_cron_executes_max_runs() {
         let agent = TestAgent::new("test-007", "Cron Agent");
         let mut runner = AgentRunner::new(agent).await.unwrap();
-        let expression = every_second_cron_expression();
+        let expression = every_second_cron_expression().unwrap();
 
         let outputs = runner
             .run_periodic_cron(
@@ -1194,7 +1196,7 @@ mod tests {
             .run_periodic_cron(
                 AgentInput::text("x"),
                 CronRunConfig {
-                    expression: every_second_cron_expression(),
+                    expression: every_second_cron_expression().unwrap(),
                     max_runs: 0,
                     run_immediately: true,
                     misfire_policy: CronMisfirePolicy::Skip,
@@ -1207,7 +1209,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_runner_run_periodic_cron_misfire_policy_run_once() {
-        let expression = every_second_cron_expression();
+        let expression = every_second_cron_expression().unwrap();
 
         let mut skip_runner = AgentRunner::new(MisfireProbeAgent::new(
             "test-009-skip",
