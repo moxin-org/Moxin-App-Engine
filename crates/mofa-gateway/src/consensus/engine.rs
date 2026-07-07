@@ -524,12 +524,19 @@ impl ConsensusEngine {
                 .copied()
                 .unwrap_or(prev_log_index);
 
+            // prev_log_index is the entry *before* next_index, i.e. next_index - 1.
+            // replicate_entry already does this correctly (saturating_sub(1)),
+            // but heartbeats were sending next_index raw, causing the follower's
+            // consistency check to always fail (it looks for an entry one past
+            // what actually exists).
+            let hb_prev_log_index = LogIndex::new(next_index.0.saturating_sub(1));
+
             // Read commit_index after getting prev_log info to ensure we have the latest
             let current_commit_index = state.read().await.commit_index;
             let heartbeat = AppendEntriesRequest {
                 term: current_term,
                 leader_id: node_id.clone(),
-                prev_log_index: next_index,
+                prev_log_index: hb_prev_log_index,
                 prev_log_term,
                 entries: Vec::new(), // Empty for heartbeat
                 leader_commit: current_commit_index,
