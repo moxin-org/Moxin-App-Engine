@@ -1244,23 +1244,51 @@ impl WorkflowExecutor {
 
         info!("Executing sub-workflow: {}", sub_workflow_id);
 
-        // 使用 execute_parallel_workflow 而不是 execute 来避免递归
-        // Use execute_parallel_workflow instead of execute to avoid recursion
-        // 这样可以避免无限递归的 Future 大小问题
-        // This avoids Future size issues caused by infinite recursion
-        let sub_record = self.execute_parallel_workflow(&sub_graph, input).await?;
+        let sub_ctx = WorkflowContext::new(&sub_graph.id);
+        sub_ctx.set_input(input.clone()).await;
 
-        // 获取子工作流的最终输出
-        // Get the final output of the sub-workflow
-        let output = if let Some(end_node) = sub_graph.end_nodes().first() {
-            sub_record
-                .outputs
-                .get(end_node)
-                .cloned()
-                .unwrap_or(WorkflowValue::Null)
-        } else {
-            WorkflowValue::Null
+        let start_node_id = sub_graph
+            .start_node()
+            .ok_or_else(|| "No start node".to_string())?;
+
+        let mut sub_record = ExecutionRecord {
+            execution_id: sub_ctx.execution_id.clone(),
+            workflow_id: sub_graph.id.clone(),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            ended_at: None,
+            status: WorkflowStatus::Running,
+            node_records: Vec::new(),
+            outputs: HashMap::new(),
+            total_wait_time_ms: 0,
+            context: None,
         };
+
+        let sub_result = Box::pin(self.execute_from_node(
+            &sub_graph,
+            &sub_ctx,
+            start_node_id,
+            input.clone(),
+            &mut sub_record,
+        ))
+        .await;
+
+        let output = match sub_result {
+            Ok(_) => {
+                if let Some(end_node) = sub_graph.end_nodes().first() {
+                    sub_ctx
+                        .get_node_output(end_node)
+                        .await
+                        .unwrap_or(WorkflowValue::Null)
+                } else {
+                    WorkflowValue::Null
+                }
+            }
+            Err(e) => return Err(format!("Sub-workflow failed: {}", e)),
+        };
+
         ctx.set_node_output(node.id(), output.clone()).await;
         ctx.set_node_status(node.id(), NodeStatus::Completed).await;
 
@@ -1365,6 +1393,7 @@ impl WorkflowExecutor {
                     .into_iter()
                     .map(String::from)
                     .collect();
+                let incoming_edges = graph.get_incoming_edges(&n_id).to_vec();
 
                 join_set.spawn(async move {
                     let node_start_time = std::time::SystemTime::now()
@@ -1391,7 +1420,37 @@ impl WorkflowExecutor {
                     };
 
                     let result = if let Some(node) = node_clone {
-                        if ctx_clone.get_node_status(&n_id).await == Some(NodeStatus::Completed) {
+                        let mut should_skip = false;
+                        if !incoming_edges.is_empty() {
+                            let mut has_valid_path = false;
+                            for edge in &incoming_edges {
+                                let pred_status = ctx_clone.get_node_status(&edge.from).await.unwrap_or(NodeStatus::Pending);
+                                if pred_status == NodeStatus::Skipped {
+                                    continue;
+                                }
+                                match &edge.edge_type {
+                                    super::graph::EdgeType::Conditional(cond) => {
+                                        let pred_output = ctx_clone.get_node_output(&edge.from).await.unwrap_or(WorkflowValue::Null);
+                                        if pred_output.as_str().unwrap_or("false") == cond {
+                                            has_valid_path = true;
+                                            break;
+                                        }
+                                    }
+                                    _ => {
+                                        has_valid_path = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            should_skip = !has_valid_path;
+                        }
+
+                        if should_skip {
+                            info!("Skipping node due to unmatched conditional edges: {}", n_id);
+                            ctx_clone.set_node_status(&n_id, NodeStatus::Skipped).await;
+                            ctx_clone.set_node_output(&n_id, WorkflowValue::Null).await;
+                            NodeResult::skipped(&n_id)
+                        } else if ctx_clone.get_node_status(&n_id).await == Some(NodeStatus::Completed) {
                             info!("Skipping already completed node: {}", n_id);
                             NodeResult::success(
                                 &n_id,
