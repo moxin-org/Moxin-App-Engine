@@ -1603,7 +1603,7 @@ impl LLMAgent {
                         if let Some(sentence) = buffer.push(&text_chunk)
                             && let Err(e) = tts_handle.sink.synth(sentence).await
                         {
-                            eprintln!("[TTS Error] Failed to submit sentence: {}", e);
+                            tracing::error!(error = %e, "[TTS Error] Failed to submit sentence");
                             // 继续流式处理，即使 TTS 失败
                             // Continue streaming even if TTS fails
                         }
@@ -1618,7 +1618,7 @@ impl LLMAgent {
             if let Some(remaining) = buffer.flush()
                 && let Err(e) = tts_handle.sink.synth(remaining).await
             {
-                eprintln!("[TTS Error] Failed to submit final sentence: {}", e);
+                tracing::error!(error = %e, "[TTS Error] Failed to submit final sentence");
             }
 
             // Step 6: 清理会话
@@ -1680,7 +1680,7 @@ impl LLMAgent {
                 && let Some(cb) = callback
             {
                 for sentence in &sentences {
-                    println!("\n[TTS] {}", sentence);
+                    tracing::info!("[TTS] Processing batch sentence: {}", sentence);
                 }
                 // 注意：非 kokoro 环境下无法调用此方法
                 // Note: This method cannot be called in non-kokoro environments
