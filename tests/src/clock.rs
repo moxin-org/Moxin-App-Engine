@@ -26,6 +26,10 @@ impl Default for MockClock {
 }
 
 impl MockClock {
+    fn current_millis(&self) -> u64 {
+        self.current_ms.load(Ordering::Relaxed)
+    }
+
     /// Create a clock starting at time zero.
     pub fn new() -> Self {
         Self {
@@ -63,6 +67,27 @@ impl MockClock {
     /// Disable auto-advance.
     pub fn clear_auto_advance(&self) {
         *self.auto_advance_ms.write().expect("lock poisoned") = None;
+    }
+
+    /// Return the current time without triggering auto-advance.
+    pub fn peek_millis(&self) -> u64 {
+        self.current_millis()
+    }
+
+    /// Compute an absolute deadline by adding `timeout` to the current time.
+    pub fn deadline_after(&self, timeout: Duration) -> u64 {
+        self.current_millis()
+            .saturating_add(timeout.as_millis() as u64)
+    }
+
+    /// Returns true when current time is at or past `deadline_ms`.
+    pub fn has_reached_deadline(&self, deadline_ms: u64) -> bool {
+        self.current_millis() >= deadline_ms
+    }
+
+    /// Return remaining time until `deadline_ms` (floored at zero).
+    pub fn remaining_until(&self, deadline_ms: u64) -> Duration {
+        Duration::from_millis(deadline_ms.saturating_sub(self.current_millis()))
     }
 }
 

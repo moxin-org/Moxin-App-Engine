@@ -64,6 +64,61 @@ impl MockAgentBus {
         self.captured_messages.read().await.len()
     }
 
+    pub async fn sender_sequence(&self) -> Vec<String> {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .map(|(sender, _, _)| sender.clone())
+            .collect()
+    }
+
+    pub async fn mode_sequence(&self) -> Vec<CommunicationMode> {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .map(|(_, mode, _)| mode.clone())
+            .collect()
+    }
+
+    pub async fn sender_mode_sequence(&self) -> Vec<(String, CommunicationMode)> {
+        self.captured_messages
+            .read()
+            .await
+            .iter()
+            .map(|(sender, mode, _)| (sender.clone(), mode.clone()))
+            .collect()
+    }
+
+    pub async fn has_sender_sequence(&self, expected: &[&str]) -> bool {
+        let actual = self.sender_sequence().await;
+        actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(expected.iter())
+                .all(|(actual_sender, expected_sender)| actual_sender == expected_sender)
+    }
+
+    pub async fn has_mode_sequence(&self, expected: &[CommunicationMode]) -> bool {
+        let actual = self.mode_sequence().await;
+        actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(expected.iter())
+                .all(|(actual_mode, expected_mode)| actual_mode == expected_mode)
+    }
+
+    pub async fn has_sender_mode_sequence(&self, expected: &[(&str, CommunicationMode)]) -> bool {
+        let actual = self.sender_mode_sequence().await;
+        actual.len() == expected.len()
+            && actual.iter().zip(expected.iter()).all(
+                |((actual_sender, actual_mode), (expected_sender, expected_mode))| {
+                    actual_sender == expected_sender && actual_mode == expected_mode
+                },
+            )
+    }
+
     /// Clears the capture history.
     pub async fn clear_history(&self) {
         self.captured_messages.write().await.clear();
