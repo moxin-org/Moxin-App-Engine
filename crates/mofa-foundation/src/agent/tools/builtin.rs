@@ -37,6 +37,13 @@ use crate::agent::components::tool::{SimpleTool, ToolCategory};
 // HttpTool
 // ============================================================================
 
+/// Shared HTTP client for connection pool reuse across all invocations.
+/// reqwest::Client holds an internal connection pool, DNS resolver, and TLS cache
+/// that are expensive to recreate. This static ensures keep-alive reuse and efficient
+/// resource management across the lifetime of the agent.
+static HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> =
+    once_cell::sync::Lazy::new(|| reqwest::Client::new());
+
 /// Make HTTP GET or POST requests and return the response body.
 ///
 /// Requires network access. The LLM supplies the URL, method, optional headers,
@@ -96,7 +103,7 @@ impl SimpleTool for HttpTool {
         };
 
         let method = input.get_str("method").unwrap_or("GET").to_uppercase();
-        let client = reqwest::Client::new();
+        let client = &*HTTP_CLIENT;
 
         let mut builder = match method.as_str() {
             "GET" => client.get(&url),
