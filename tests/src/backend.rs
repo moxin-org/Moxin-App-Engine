@@ -27,6 +27,7 @@ pub struct MockLLMBackend {
     response_sequences: Arc<RwLock<ResponseSequences>>,
     call_count: Arc<AtomicUsize>,
     rate_limit: Arc<RwLock<Option<RateLimit>>>,
+    infer_history: Arc<RwLock<Vec<String>>>,
 }
 
 struct RateLimit {
@@ -55,7 +56,28 @@ impl MockLLMBackend {
             response_sequences: Arc::new(RwLock::new(Vec::new())),
             call_count: Arc::new(AtomicUsize::new(0)),
             rate_limit: Arc::new(RwLock::new(None)),
+            infer_history: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// All prompts passed to `infer()`, in call order.
+    pub fn infer_history(&self) -> Vec<String> {
+        self.infer_history.read().expect("lock poisoned").clone()
+    }
+
+    /// Number of `infer()` calls whose prompt contains the given substring.
+    pub fn infer_count_for(&self, prompt_substring: &str) -> usize {
+        self.infer_history
+            .read()
+            .expect("lock poisoned")
+            .iter()
+            .filter(|p| p.contains(prompt_substring))
+            .count()
+    }
+
+    /// Clear the infer history.
+    pub fn clear_infer_history(&self) {
+        self.infer_history.write().expect("lock poisoned").clear();
     }
 
     /// Append a response rule. Order determines priority (first match wins).
@@ -209,6 +231,10 @@ impl ModelOrchestrator for MockLLMBackend {
 
     async fn infer(&self, _model_id: &str, input: &str) -> OrchestratorResult<String> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
+        self.infer_history
+            .write()
+            .expect("lock poisoned")
+            .push(input.to_string());
 
         // 1. Drain failure queue (FIFO)
         {
