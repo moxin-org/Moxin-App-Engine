@@ -598,7 +598,7 @@ impl MetricsCollector {
                     (
                         p.cpu_usage() as f64,
                         p.memory(),
-                        p.tasks().iter().count() as u32,
+                        p.tasks().map(|t| t.len()).unwrap_or(0) as u32,
                     )
                 })
                 .unwrap_or((0.0, 0, 0));
