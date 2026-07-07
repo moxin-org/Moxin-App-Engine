@@ -3,6 +3,7 @@
 use crate::CliError;
 use crate::context::CliContext;
 use colored::Colorize;
+use std::collections::VecDeque;
 use std::io::SeekFrom;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
@@ -110,9 +111,7 @@ async fn display_log_file(
 
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
-    let mut count = 0;
-
-    let mut output_lines = Vec::new();
+    let mut output_lines = VecDeque::new();
 
     while let Some(line) = lines.next_line().await.map_err(|e| {
         CliError::StateError(format!(
@@ -134,16 +133,10 @@ async fn display_log_file(
             continue;
         }
 
-        // Apply limit
-        if let Some(max) = limit
-            && count >= max
-        {
-            break;
-        }
-
-        output_lines.push(line);
-        count += 1;
+        push_with_limit(&mut output_lines, line, limit);
     }
+
+    let count = output_lines.len();
 
     // Output
     if json {
@@ -160,6 +153,19 @@ async fn display_log_file(
     }
 
     Ok(())
+}
+
+fn push_with_limit(buffer: &mut VecDeque<String>, line: String, limit: Option<usize>) {
+    match limit {
+        Some(0) => {}
+        Some(max) => {
+            if buffer.len() == max {
+                buffer.pop_front();
+            }
+            buffer.push_back(line);
+        }
+        None => buffer.push_back(line),
+    }
 }
 
 /// Colorize log line based on log level
@@ -404,5 +410,23 @@ mod tests {
     fn test_colorize_log_line_dims_bracketed_trace_prefix() {
         let line = "[TRACE] module::op starting";
         assert_eq!(colorize_log_line(line), line.bright_black().to_string());
+    }
+
+    #[test]
+    fn test_push_with_limit_keeps_most_recent_lines() {
+        let mut buffer = VecDeque::new();
+        push_with_limit(&mut buffer, "line-1".to_string(), Some(2));
+        push_with_limit(&mut buffer, "line-2".to_string(), Some(2));
+        push_with_limit(&mut buffer, "line-3".to_string(), Some(2));
+
+        let collected: Vec<_> = buffer.into_iter().collect();
+        assert_eq!(collected, vec!["line-2", "line-3"]);
+    }
+
+    #[test]
+    fn test_push_with_zero_limit_keeps_no_lines() {
+        let mut buffer = VecDeque::new();
+        push_with_limit(&mut buffer, "line-1".to_string(), Some(0));
+        assert!(buffer.is_empty());
     }
 }
