@@ -2,6 +2,7 @@ use std::env::consts;
 
 /// Represents the operating system of the host machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OsClassification {
     MacOS,
     Windows,
@@ -11,6 +12,7 @@ pub enum OsClassification {
 
 /// Represents the CPU family/architecture of the host machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CpuFamily {
     AppleSilicon,
     X86_64,
@@ -20,6 +22,7 @@ pub enum CpuFamily {
 
 /// The type of GPU acceleration detected on the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GpuType {
     /// Apple Metal (available on all macOS 10.14+ devices, both Intel and Apple Silicon).
     Metal,

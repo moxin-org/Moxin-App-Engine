@@ -35,6 +35,7 @@ pub enum KernelError {
 ### 1. Enum Extensibility
 
 - **MUST** add the `#[non_exhaustive]` attribute to public enums to ensure backward compatibility
+- **MUST** treat foundation-facing public enums as forward-compatible API surface; additive variants should not require downstream exhaustive-match rewrites
 
 ```rust
 #[derive(Debug, Clone)]

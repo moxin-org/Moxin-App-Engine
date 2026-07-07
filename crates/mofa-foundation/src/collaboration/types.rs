@@ -98,6 +98,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
+#[non_exhaustive]
 pub enum CollaborationMode {
     /// 请求-响应模式：适合一对一的确定性任务
     /// Request-Response mode: suitable for one-to-one deterministic tasks
@@ -188,6 +189,7 @@ pub struct CollaborationMessage {
 /// 支持多种内容格式，方便 LLM 理解和处理
 /// Supports multiple content formats for easy LLM understanding and processing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CollaborationContent {
     /// 纯文本内容（自然语言）
     /// Plain text content (natural language)

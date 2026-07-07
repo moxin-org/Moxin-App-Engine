@@ -15,6 +15,7 @@ use std::collections::HashMap;
 /// Todo 任务状态
 /// Todo task status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TodoStatus {
     /// 待处理
     /// Pending
@@ -42,6 +43,7 @@ pub enum TodoStatus {
 /// Todo 任务优先级
 /// Todo task priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TodoPriority {
     Low = 0,
     Medium = 1,
@@ -270,6 +272,7 @@ pub struct CriticalDecision {
 /// 决策类型
 /// Decision type
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DecisionType {
     /// 需求澄清
     /// Requirement clarification
@@ -353,6 +356,7 @@ pub struct Report {
 /// 汇报类型
 /// Report type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ReportType {
     /// 任务完成汇报
     /// Task completion report
@@ -376,6 +380,7 @@ pub enum ReportType {
 /// 秘书 Agent 与执行 Agent 之间的 A2A 消息
 /// A2A message between Secretary Agent and Execution Agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SecretaryMessage {
     /// 分配任务
     /// Assign task
@@ -415,6 +420,7 @@ pub enum SecretaryMessage {
 /// 任务执行状态
 /// Task execution status
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TaskExecutionStatus {
     /// 已接收
     /// Received
@@ -444,6 +450,7 @@ pub enum TaskExecutionStatus {
 /// 默认用户输入
 /// Default user input
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DefaultInput {
     /// 新想法/需求
     /// New idea/requirement
@@ -470,6 +477,7 @@ pub enum DefaultInput {
 /// 查询类型
 /// Query type
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QueryType {
     /// 获取 Todo 列表
     /// Get Todo list
@@ -491,6 +499,7 @@ pub enum QueryType {
 /// 秘书命令
 /// Secretary command
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SecretaryCommand {
     /// 开始澄清某个 Todo
     /// Start clarifying a specific Todo
@@ -518,6 +527,7 @@ pub enum SecretaryCommand {
 /// 默认秘书输出
 /// Default secretary output
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DefaultOutput {
     /// 确认消息
     /// Acknowledgment message
@@ -548,6 +558,7 @@ pub enum DefaultOutput {
 /// 秘书 Agent 工作阶段
 /// Secretary Agent work phase
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WorkPhase {
     /// 阶段1: 接收想法
     /// Phase 1: Receiving idea
