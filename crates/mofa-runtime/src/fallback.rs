@@ -36,3 +36,49 @@ impl FallbackStrategy for NoFallback {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_error() -> AgentError {
+        AgentError::NotFound("test-agent".into())
+    }
+
+    #[tokio::test]
+    async fn static_fallback_returns_output() {
+        let fallback = StaticFallback {
+            output: AgentOutput::text("service unavailable"),
+        };
+        let result = fallback.on_failure("agent-1", &test_error(), 3).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn static_fallback_ignores_agent_id_and_attempts() {
+        let fallback = StaticFallback {
+            output: AgentOutput::text("down"),
+        };
+        // Different agent_id and attempt_count should still return the same output
+        let r1 = fallback.on_failure("a", &test_error(), 1).await;
+        let r2 = fallback.on_failure("b", &test_error(), 100).await;
+        assert!(r1.is_some());
+        assert!(r2.is_some());
+    }
+
+    #[tokio::test]
+    async fn no_fallback_returns_none() {
+        let fallback = NoFallback;
+        let result = fallback.on_failure("agent-1", &test_error(), 5).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_fallback_always_none_regardless_of_inputs() {
+        let fallback = NoFallback;
+        for attempts in [0, 1, 10, 100] {
+            let result = fallback.on_failure("any", &test_error(), attempts).await;
+            assert!(result.is_none());
+        }
+    }
+}

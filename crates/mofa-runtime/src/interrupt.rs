@@ -45,3 +45,81 @@ impl AgentInterrupt {
             .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_is_not_interrupted() {
+        let interrupt = AgentInterrupt::new();
+        assert!(!interrupt.check());
+    }
+
+    #[test]
+    fn default_is_not_interrupted() {
+        let interrupt = AgentInterrupt::default();
+        assert!(!interrupt.check());
+    }
+
+    #[test]
+    fn trigger_sets_interrupted() {
+        let interrupt = AgentInterrupt::new();
+        interrupt.trigger();
+        assert!(interrupt.check());
+    }
+
+    #[test]
+    fn reset_clears_interrupted() {
+        let interrupt = AgentInterrupt::new();
+        interrupt.trigger();
+        assert!(interrupt.check());
+        interrupt.reset();
+        assert!(!interrupt.check());
+    }
+
+    #[test]
+    fn trigger_reset_trigger_cycle() {
+        let interrupt = AgentInterrupt::new();
+        interrupt.trigger();
+        interrupt.reset();
+        interrupt.trigger();
+        assert!(interrupt.check());
+    }
+
+    #[test]
+    fn clone_shares_state() {
+        let a = AgentInterrupt::new();
+        let b = a.clone();
+        a.trigger();
+        // Both clones see the same atomic — this is the whole point of Arc
+        assert!(b.check());
+    }
+
+    #[test]
+    fn clone_reset_affects_both() {
+        let a = AgentInterrupt::new();
+        let b = a.clone();
+        a.trigger();
+        b.reset();
+        assert!(!a.check());
+    }
+
+    #[tokio::test]
+    async fn notify_wakes_waiter() {
+        let interrupt = AgentInterrupt::new();
+        let interrupt2 = interrupt.clone();
+
+        let handle = tokio::spawn(async move {
+            interrupt2.notify.notified().await;
+            interrupt2.check()
+        });
+
+        // Small yield to let the spawned task reach the notified().await
+        tokio::task::yield_now().await;
+        interrupt.trigger();
+
+        let was_interrupted = handle.await.unwrap();
+        assert!(was_interrupted);
+    }
+}
