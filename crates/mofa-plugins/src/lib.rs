@@ -1658,4 +1658,66 @@ mod tests {
         assert_eq!(config.get_i64("timeout"), Some(30));
         assert_eq!(config.get_bool("enabled"), Some(true));
     }
+
+
+    #[tokio::test]
+    async fn test_tool_plugin_operations(){
+        //here we will be checking : regiter + execute for demo tool 
+        struct EchoTool;
+
+        #[async_trait::async_trait]
+        impl ToolExecutor for EchoTool{
+            fn definition(&self)-> &ToolDefinition{
+                Box::leak(Box::new(ToolDefinition {
+                    name: "echo".to_string(),
+                    description: "Echo tool".to_string(),
+                    parameters: serde_json::json!({}),
+                    requires_confirmation: false,
+                }))
+            }
+        async fn execute(&self,args:serde_json::Value)->PluginResult<serde_json::Value>{
+
+            Ok(args)
+
+        }}
+            
+
+        let mut plugin = ToolPlugin::new("tool_test");
+        plugin.register_tool(EchoTool);
+
+        let call = ToolCall {
+            name: "echo".into(),
+            arguments: serde_json::json!({"msg": "hello"}),
+            call_id: "1".into(),
+        };
+
+        let result = plugin.call_tool(call).await.unwrap();
+
+        assert_eq!(result.result["msg"], "hello");
+    
+    }
+    #[tokio::test]
+    async fn test_memory_plugin_eviction_when_limit_exceeded(){
+        let mut memory= MemoryPlugin::new("memory_test").with_max_memories(2);
+
+        memory.add_memory("low importance", 0.1);
+        memory.add_memory("medium importance", 0.5);
+        memory.add_memory("high importance", 0.9);
+
+
+        assert_eq!(memory.all_memories().len(), 2);
+
+        let contents: Vec<&str> = memory
+            .all_memories()
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
+
+        assert!(!contents.contains(&"low importance"));
+
+
+    }
+
+
+
 }
