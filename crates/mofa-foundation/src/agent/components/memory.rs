@@ -742,3 +742,149 @@ impl Memory for FileBasedStorage {
         "file-based"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn test_file_based_persistence() -> AgentResult<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "persistent_session";
+        
+        // Scope 1: Write data
+        {
+            let mut storage = FileBasedStorage::new(temp_dir.path()).await?;
+            storage.store("persist_key", MemoryValue::text("persistent data")).await?;
+            storage.add_to_history(session_id, Message::user("Hello file")).await?;
+            storage.write_long_term("Long term knowledge").await?;
+            storage.append_today("Today note 1").await?;
+        } // Storage object dropped here, data should be on disk
+        
+        // Scope 2: Read data back after restart
+        {
+            let storage2 = FileBasedStorage::new(temp_dir.path()).await?;
+            
+            // Verify key-value persistence
+            let retrieved = storage2.retrieve("persist_key").await?;
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap().as_text().unwrap(), "persistent data");
+            
+            // Verify history persistence
+            let history = storage2.get_history(session_id).await?;
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].content, "Hello file");
+            
+            // Verify markdown files
+            let long_term = storage2.read_long_term().await?;
+            assert_eq!(long_term, "Long term knowledge");
+            
+            let today = storage2.read_today().await?;
+            assert!(today.contains("Today note 1"));
+            
+            // Test Search across memory and markdown (daily notes)
+            let search_results = storage2.search("note", 5).await?;
+            assert!(!search_results.is_empty(), "Should find 'note' from today's memory");
+            
+            let search_results2 = storage2.search("persistent", 5).await?;
+            assert!(!search_results2.is_empty(), "Should find 'persistent' from data values");
+        }
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_file_based_clear() -> AgentResult<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        
+        let mut storage = FileBasedStorage::new(temp_dir.path()).await?;
+        storage.store("key_to_clear", MemoryValue::text("data")).await?;
+        storage.add_to_history("clear_sess", Message::user("msg")).await?;
+        
+        storage.clear().await?;
+        
+        // Verify memory is empty
+        let retrieved = storage.retrieve("key_to_clear").await?;
+        assert!(retrieved.is_none());
+        
+        let history = storage.get_history("clear_sess").await?;
+        assert!(history.is_empty());
+        
+        // Verify disk files were removed
+        let data_file = temp_dir.path().join("memory").join("data.json");
+        assert!(!data_file.exists());
+        
+        // Also check sessions dir still exists (or was recreated) but is empty.
+        // Use spawn_blocking to avoid blocking the async runtime with a sync fs call.
+        let sessions_dir = temp_dir.path().join("memory").join("sessions");
+        assert!(sessions_dir.exists());
+        let sessions_dir_clone = sessions_dir.clone();
+        let entries = tokio::task::spawn_blocking(move || {
+            std::fs::read_dir(sessions_dir_clone)
+                .expect("Failed to read sessions dir")
+                .count()
+        })
+        .await
+        .expect("spawn_blocking failed");
+        assert_eq!(entries, 0);
+
+        Ok(())
+    }
+
+    /// Tests that 10 concurrent tasks safely write to `FileBasedStorage` under
+    /// a `RwLock` (write-lock serializes writes), then verifies all values are
+    /// both in-memory correct and persisted to disk after a storage reload.
+    #[tokio::test]
+    async fn test_file_based_concurrency() -> AgentResult<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let storage = Arc::new(RwLock::new(FileBasedStorage::new(temp_dir.path()).await?));
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let storage_clone = Arc::clone(&storage);
+            handles.push(tokio::spawn(async move {
+                let key = format!("concurrent_key_{}", i);
+                // write_owned() returns an OwnedRwLockWriteGuard which is Send,
+                // making the future safe to use with tokio::spawn.
+                let mut s = storage_clone.write_owned().await;
+                s.store(&key, MemoryValue::text(format!("data {}", i))).await.unwrap();
+                s.add_to_history("shared_session", Message::user(format!("msg {}", i))).await.unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify in-memory correctness
+        {
+            let s = storage.read().await;
+            for i in 0..10 {
+                let key = format!("concurrent_key_{}", i);
+                let val = s.retrieve(&key).await?.unwrap();
+                assert_eq!(val.as_text().unwrap(), format!("data {}", i));
+            }
+            let history = s.get_history("shared_session").await?;
+            assert_eq!(history.len(), 10);
+        }
+
+        // Verify disk persistence: drop the Arc and reload from the same directory
+        drop(storage);
+        let reloaded = FileBasedStorage::new(temp_dir.path()).await?;
+        for i in 0..10 {
+            let key = format!("concurrent_key_{}", i);
+            let val = reloaded
+                .retrieve(&key)
+                .await?
+                .expect(&format!("key '{}' should survive reload", key));
+            assert_eq!(val.as_text().unwrap(), format!("data {}", i));
+        }
+        let reloaded_history = reloaded.get_history("shared_session").await?;
+        assert_eq!(reloaded_history.len(), 10, "all 10 history messages must survive reload");
+
+        Ok(())
+    }
+}
