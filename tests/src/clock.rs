@@ -64,6 +64,31 @@ impl MockClock {
     pub fn clear_auto_advance(&self) {
         *self.auto_advance_ms.write().expect("lock poisoned") = None;
     }
+
+    /// Peek the current time in milliseconds without triggering auto-advance.
+    pub fn peek_millis(&self) -> u64 {
+        self.current_ms.load(Ordering::Relaxed)
+    }
+
+    /// Compute an absolute deadline from the current time.
+    pub fn deadline_after(&self, timeout: Duration) -> u64 {
+        self.peek_millis().saturating_add(timeout.as_millis() as u64)
+    }
+
+    /// Check if the given deadline has been reached based on the current time.
+    pub fn has_reached_deadline(&self, deadline_ms: u64) -> bool {
+        self.peek_millis() >= deadline_ms
+    }
+
+    /// Return the non-negative remaining duration until the given deadline.
+    pub fn remaining_until(&self, deadline_ms: u64) -> Duration {
+        let current = self.peek_millis();
+        if current >= deadline_ms {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(deadline_ms - current)
+        }
+    }
 }
 
 impl Clock for MockClock {
