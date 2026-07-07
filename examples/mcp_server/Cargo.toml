@@ -1,0 +1,23 @@
+[package]
+name = "mcp_server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mcp_server"
+path = "src/main.rs"
+
+[dependencies]
+mofa-foundation = { path = "../../crates/mofa-foundation", features = ["mcp-server"] }
+mofa-kernel = { path = "../../crates/mofa-kernel" }
+
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+tokio-util = "0.7"
+
+[lints]
+workspace = true

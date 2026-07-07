@@ -31,6 +31,8 @@ persistence-all = [
 kokoro = ["mofa-plugins/kokoro"]
 # Enable MCP (Model Context Protocol) client support
 mcp = ["dep:rmcp"]
+# Enable MCP (Model Context Protocol) server support — expose MoFA tools over MCP
+mcp-server = ["dep:rmcp", "rmcp/server", "rmcp/transport-streamable-http-server", "dep:axum", "dep:tokio-util"]
 # Enable Qdrant vector database support
 qdrant = ["dep:qdrant-client"]
 # Enable accurate token counting with tiktoken
@@ -100,6 +102,9 @@ rmcp = { version = "0.16", features = [
     "transport-child-process",
     "transport-io",
 ], optional = true }
+
+# Cancellation token for graceful MCP server shutdown (pulled in transitively by rmcp)
+tokio-util = { version = "0.7", optional = true }
 
 # Datetime support for persistence
 chrono.workspace = true

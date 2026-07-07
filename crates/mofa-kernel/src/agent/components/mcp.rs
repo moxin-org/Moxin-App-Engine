@@ -209,6 +209,71 @@ pub struct McpServerInfo {
 }
 
 // ============================================================================
+// MCP Host Configuration (Server-Side)
+// ============================================================================
+
+/// Configuration for hosting a MoFA MCP server
+///
+/// Used when MoFA acts as an MCP server, exposing its tools and workflow
+/// executions as MCP endpoints for external systems to call.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let config = McpHostConfig::new("mofa-agent", "127.0.0.1", 3000)
+///     .with_instructions("A MoFA agent exposing its tools over MCP.");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpHostConfig {
+    /// Hostname or IP address to bind the server to
+    pub host: String,
+    /// Port to listen on
+    pub port: u16,
+    /// Server name reported during MCP handshake
+    pub name: String,
+    /// Server version reported during MCP handshake
+    pub version: String,
+    /// Optional instructions shown to connecting clients
+    pub instructions: Option<String>,
+}
+
+impl McpHostConfig {
+    /// Create a new host configuration
+    pub fn new(name: impl Into<String>, host: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            name: name.into(),
+            version: "0.1.0".to_string(),
+            instructions: None,
+        }
+    }
+
+    /// Set instructions returned to connecting MCP clients
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Set the server version string
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    /// Returns the `host:port` bind address string
+    pub fn bind_addr(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+impl Default for McpHostConfig {
+    fn default() -> Self {
+        Self::new("mofa-mcp-server", "127.0.0.1", 3000)
+    }
+}
+
+// ============================================================================
 // MCP Client Trait
 // ============================================================================
 

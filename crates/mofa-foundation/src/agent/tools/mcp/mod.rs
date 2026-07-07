@@ -14,6 +14,10 @@
 
 mod client;
 mod tool_adapter;
+#[cfg(feature = "mcp-server")]
+mod server;
 
 pub use client::McpClientManager;
 pub use tool_adapter::McpToolAdapter;
+#[cfg(feature = "mcp-server")]
+pub use server::McpServerManager;

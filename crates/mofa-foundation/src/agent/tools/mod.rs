@@ -18,7 +18,7 @@ pub mod registry;
 /// ```toml
 /// mofa-foundation = { version = "0.1", features = ["mcp"] }
 /// ```
-#[cfg(feature = "mcp")]
+#[cfg(any(feature = "mcp", feature = "mcp-server"))]
 pub mod mcp;
 
 pub use adapters::{BuiltinTools, ClosureTool, FunctionTool};
