@@ -146,7 +146,26 @@ impl InferenceOrchestrator {
 
         // Step 2: Evaluate admission based on current memory state
         // Memory is always derived from ModelPool (single source of truth)
-        let admission = self.evaluate_admission(request);
+        let mut admission = self.evaluate_admission(request);
+
+        // Critical requests can reclaim memory via priority-aware eviction before
+        // we decide to reject/fallback. This is skipped for CloudOnly policy
+        // because local admission does not participate in routing there.
+        if request.priority == RequestPriority::Critical
+            && admission == AdmissionOutcome::Reject
+            && self.config.routing_policy != RoutingPolicy::CloudOnly
+        {
+            let (post_reclaim_admission, evicted_models) =
+                self.attempt_critical_reclamation(request);
+            if evicted_models > 0 {
+                tracing::warn!(
+                    model_id = %request.model_id,
+                    evicted_models,
+                    "critical request triggered priority-aware reclamation before routing"
+                );
+            }
+            admission = post_reclaim_admission;
+        }
 
         // Step 3: Resolve routing based on policy + admission + hardware
         let decision = routing::resolve(
@@ -356,6 +375,40 @@ impl InferenceOrchestrator {
                 }
             }
         }
+    }
+
+    /// Attempt to reclaim memory for a critical request by evicting
+    /// lower-resistance models (priority-aware LRU) before final routing.
+    ///
+    /// Returns the post-reclamation admission outcome and number of models evicted.
+    fn attempt_critical_reclamation(
+        &mut self,
+        request: &InferenceRequest,
+    ) -> (AdmissionOutcome, usize) {
+        // Fast-fail: if request cannot fit under reject threshold even on empty pool,
+        // do not evict existing models pointlessly.
+        if self.config.memory_capacity_mb == 0 {
+            return (AdmissionOutcome::Reject, 0);
+        }
+        let request_usage =
+            request.required_memory_mb as f64 / self.config.memory_capacity_mb as f64;
+        if request_usage > self.config.reject_threshold {
+            return (AdmissionOutcome::Reject, 0);
+        }
+
+        let mut evicted_models = 0usize;
+        while self.evaluate_admission(request) == AdmissionOutcome::Reject {
+            if self
+                .model_pool
+                .evict_lru_for_priority(request.priority)
+                .is_none()
+            {
+                break;
+            }
+            evicted_models += 1;
+        }
+
+        (self.evaluate_admission(request), evicted_models)
     }
 
     /// Get the current memory usage as a fraction of total capacity (0.0–1.0).
@@ -703,5 +756,59 @@ mod tests {
             },
             "Low priority in defer band should fall back to cloud"
         );
+    }
+
+    #[test]
+    fn test_critical_priority_reclaims_memory_before_fallback() {
+        let mut config = test_config();
+        config.memory_capacity_mb = 10_000;
+        config.defer_threshold = 0.70;
+        config.reject_threshold = 0.90;
+        let mut orch = InferenceOrchestrator::with_hardware(config, test_hardware());
+
+        // 60% usage -> admitted locally and loaded.
+        let fill = InferenceRequest::new("base-model", "warmup", 6_000)
+            .with_priority(RequestPriority::Low);
+        let fill_result = orch.infer(&fill);
+        assert!(matches!(fill_result.routed_to, RoutedBackend::Local { .. }));
+        assert_eq!(orch.allocated_memory_mb(), 6_000);
+
+        // Projected usage = 100% -> initial reject for Critical.
+        // Orchestrator should evict lower-priority model and admit locally.
+        let critical = InferenceRequest::new("critical-model", "urgent", 4_000)
+            .with_priority(RequestPriority::Critical);
+        let result = orch.infer(&critical);
+        assert_eq!(
+            result.routed_to,
+            RoutedBackend::Local {
+                model_id: "critical-model".into()
+            }
+        );
+        assert_eq!(orch.loaded_model_count(), 1);
+        assert_eq!(orch.allocated_memory_mb(), 4_000);
+    }
+
+    #[test]
+    fn test_critical_priority_does_not_evict_when_request_cannot_fit_even_empty_pool() {
+        let mut config = test_config();
+        config.memory_capacity_mb = 10_000;
+        config.defer_threshold = 0.70;
+        config.reject_threshold = 0.90;
+        config.routing_policy = RoutingPolicy::LocalOnly;
+        let mut orch = InferenceOrchestrator::with_hardware(config, test_hardware());
+
+        let fill = InferenceRequest::new("base-model", "warmup", 6_000);
+        let fill_result = orch.infer(&fill);
+        assert!(matches!(fill_result.routed_to, RoutedBackend::Local { .. }));
+
+        // 9_500 / 10_000 = 95% > reject threshold (90%), so impossible even if empty.
+        // Existing models should not be evicted.
+        let critical = InferenceRequest::new("oversized-critical", "urgent", 9_500)
+            .with_priority(RequestPriority::Critical);
+        let result = orch.infer(&critical);
+        assert!(matches!(result.routed_to, RoutedBackend::Rejected { .. }));
+
+        // base-model should still be present
+        assert_eq!(orch.unload_model("base-model"), 6_000);
     }
 }
