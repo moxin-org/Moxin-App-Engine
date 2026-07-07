@@ -24,7 +24,8 @@
 //!     .supported_format(ModelFormat::Safetensors)
 //!     .supported_quantization("q4_k".to_string())
 //!     .priority(100)
-//!     .build();
+//!     .build()
+//!     .unwrap();
 //! registry.register(descriptor);
 //!
 //! // Resolve adapter for a given model config and hardware
@@ -32,7 +33,8 @@
 //!     .model_id("llama-3-8b")
 //!     .required_modality(Modality::LLM)
 //!     .required_format_model(ModelFormat::Safetensors)
-//!     .build();
+//!     .build()
+//!     .unwrap();
 //!
 //! let hw_capability = HardwareCapability {
 //!     os: OsClassification::Linux,

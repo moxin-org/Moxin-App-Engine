@@ -101,11 +101,13 @@ impl ModelConfigBuilder {
         self
     }
 
-    pub fn build(self) -> ModelConfig {
+    pub fn build(self) -> Result<ModelConfig, super::error::AdapterError> {
         if self.config.model_id.is_empty() {
-            panic!("ModelConfig must have a model_id");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "ModelConfig must have a model_id".into(),
+            ));
         }
-        self.config
+        Ok(self.config)
     }
 }
 
@@ -337,7 +339,8 @@ mod tests {
             .required_format("safetensors")
             .required_quantization("q4_k")
             .min_priority(50)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(config.model_id, "llama-3-8b");
         assert_eq!(config.required_modality, Modality::LLM);

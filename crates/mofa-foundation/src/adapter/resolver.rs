@@ -316,7 +316,8 @@ mod tests {
             .supported_format(super::super::descriptor::ModelFormat::Safetensors)
             .priority(100)
             .estimated_latency_ms(100)
-            .build();
+            .build()
+            .unwrap();
 
         let hardware = HardwareProfile::builder().available_ram_mb(16384).build();
 
@@ -325,7 +326,8 @@ mod tests {
             &ModelConfig::builder()
                 .model_id("test")
                 .required_modality(super::super::descriptor::Modality::LLM)
-                .build(),
+                .build()
+                .unwrap(),
             &hardware,
         );
 

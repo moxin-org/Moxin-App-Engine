@@ -406,20 +406,28 @@ impl AdapterDescriptorBuilder {
         self
     }
 
-    pub fn build(self) -> AdapterDescriptor {
+    pub fn build(self) -> Result<AdapterDescriptor, super::error::AdapterError> {
         if self.descriptor.id.is_empty() {
-            panic!("AdapterDescriptor must have an id");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "AdapterDescriptor must have an id".into(),
+            ));
         }
         if self.descriptor.name.is_empty() {
-            panic!("AdapterDescriptor must have a name");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "AdapterDescriptor must have a name".into(),
+            ));
         }
         if self.descriptor.supported_modalities.is_empty() {
-            panic!("AdapterDescriptor must have at least one supported modality");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "AdapterDescriptor must have at least one supported modality".into(),
+            ));
         }
         if self.descriptor.supported_formats.is_empty() {
-            panic!("AdapterDescriptor must have at least one supported format");
+            return Err(super::error::AdapterError::InvalidConfig(
+                "AdapterDescriptor must have at least one supported format".into(),
+            ));
         }
-        self.descriptor
+        Ok(self.descriptor)
     }
 }
 
@@ -437,7 +445,8 @@ mod tests {
             .supported_format(ModelFormat::Safetensors)
             .supported_quantization("q4_k")
             .priority(100)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(descriptor.id, "test-adapter");
         assert_eq!(descriptor.name, "Test Adapter");
