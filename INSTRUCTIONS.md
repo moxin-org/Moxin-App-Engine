@@ -1,46 +1,96 @@
-# INSTRUCTIONS.md - AI Development Guidelines for MoFA Project
+# INSTRUCTIONS.md — MoFA AI Development Guidelines (LLM-Optimized Edition)
 
-This file provides guidance to AI assistants (like Aider, Continue.dev, Sourcegraph Cody, etc.) when working with code in this repository.
+This document defines **strict, production-grade Rust development standards** for the MoFA microkernel project.
 
----
-
-## Rust Project Development Standards
-
-Based on issues discovered during code reviews, the following general development standards have been compiled:
+It is optimized for:
+- Human developers
+- AI coding assistants (Copilot, Aider, Cody, ChatGPT)
 
 ---
 
-## I. Error Handling Standards
+# 🧠 CORE PRINCIPLES
 
-### 1. Unified Error System
+- Strong typing over dynamic behavior
+- Clear architecture boundaries
+- Unified error handling
+- Predictable APIs
+- High testability
+- Zero ambiguity for AI tools
 
-- **MUST** define a unified error type in the crate root (e.g., `KernelError`)
-- **MUST** establish a clear error hierarchy where module errors can be unified through the `From` trait
-- **MUST NOT** use `anyhow::Result` as a public API return type in library code; use `thiserror` to define typed errors
-- **MUST NOT** implement blanket `From<anyhow::Error>` for error types, as this erases structured error information
+---
 
-### 2. Error Type Design
+# 🏗️ ARCHITECTURE OVERVIEW
+
+```
+mofa-sdk → mofa-runtime → mofa-foundation → mofa-kernel → mofa-plugins
+```
+
+## Layer Responsibilities
+
+| Layer | Responsibility |
+|------|---------------|
+| kernel | Traits + core types ONLY |
+| foundation | Concrete implementations + business logic |
+| runtime | Execution lifecycle (event loop, registry) |
+| sdk | Public API surface |
+| plugins | Extensions and adapters |
+
+## 🚨 Golden Rules
+
+- Kernel MUST NOT contain business logic  
+- Foundation MUST NOT redefine kernel traits  
+- Dependencies must flow downward only  
+
+```
+Foundation → Kernel ✅  
+Plugins → Kernel ✅  
+Plugins → Foundation ✅  
+Kernel → Foundation ❌ FORBIDDEN  
+```
+
+---
+
+# ❗ ERROR HANDLING STANDARDS
+
+## ✅ DO
+
+- Define unified error type at crate root  
+- Use `thiserror`  
+- Use `From` for error conversion  
 
 ```rust
-// Recommended: Use thiserror to define clear error enums
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum KernelError {
     #[error("Agent error: {0}")]
     Agent(#[from] AgentError),
+
     #[error("Config error: {0}")]
     Config(#[from] ConfigError),
-    // ...
 }
 ```
 
+## ❌ DON'T
+
+- Use `anyhow::Result` in public APIs  
+- Implement `From<anyhow::Error>`  
+
+## 💡 WHY
+
+- Preserves structured errors  
+- Improves debugging  
+- Helps LLMs reason correctly  
+
 ---
 
-## II. Type Design and API Stability
+# 🧱 TYPE DESIGN
 
-### 1. Enum Extensibility
+## ✅ RULES
 
-- **MUST** add the `#[non_exhaustive]` attribute to public enums to ensure backward compatibility
+- Public enums MUST use `#[non_exhaustive]`  
+- Comparable types MUST derive `PartialEq, Eq`  
+- Debuggable types MUST derive `Debug`  
+- Clone when needed  
 
 ```rust
 #[derive(Debug, Clone)]
@@ -48,129 +98,102 @@ pub enum KernelError {
 pub enum AgentState {
     Idle,
     Running,
-    // New variants can be safely added in the future
 }
 ```
 
-### 2. Derive Trait Standards
+## 💡 WHY
 
-- Comparable/testable types **MUST** derive `PartialEq`, `Eq`
-- Debug output types **MUST** derive `Debug`; for fields that cannot be auto-derived, implement manually
-- Serializable types **MUST** derive `Clone` (unless there's a special reason not to)
+- Prevents breaking changes  
+- Ensures forward compatibility  
 
 ---
 
-## III. Naming and Module Design
+# 📦 MODULE DESIGN
 
-### 1. Naming Uniqueness
-
-- **MUST NOT** define types with the same name representing different concepts within the same crate
-- Checklist: `AgentConfig`, `AgentEvent`, `TaskPriority`, and other core type names
-
-### 2. Module Export Control
-
-- **MUST** use `pub(crate)` to limit internal module visibility
-- **MUST** carefully design the public API surface through `lib.rs` or `prelude`
-- **MUST NOT** directly `pub mod` export all modules
+## ✅ DO
 
 ```rust
-// Recommended lib.rs structure
 pub mod error;
 pub mod agent;
+
 pub use error::KernelError;
 pub use agent::{Agent, AgentContext};
-mod internal; // Internal implementation
+
+mod internal;
 ```
 
-### 3. Prelude Design
-
-- **SHOULD** provide a crate-level prelude module that aggregates commonly used types
+## ❌ DON'T
 
 ```rust
-// src/prelude.rs
-pub use crate::error::KernelError;
-pub use crate::agent::{Agent, AgentContext, AgentState};
-// ...
+pub mod everything; // BAD
 ```
+
+## 💡 WHY
+
+- Controls public API surface  
+- Avoids accidental exposure  
 
 ---
 
-## IV. Performance and Dependencies Management
+# ⚡ PERFORMANCE RULES
 
-### 1. Async Features
+## ✅ DO
 
-- In Rust 1.75+ environments, **SHOULD** use native `async fn in trait` instead of `#[async_trait]`
-- Only use `async` on methods that genuinely require async; synchronous operations should not be marked as async
-
-### 2. Avoid Repeated Computation
-
-- Objects with high compilation costs like regular expressions **MUST** be cached using `LazyLock` or `OnceLock`
+- Cache expensive objects (Regex, etc.)  
+- Use `LazyLock` / `OnceLock`  
 
 ```rust
 use std::sync::LazyLock;
-static ENV_VAR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{([^}]+)\}").unwrap()
+
+static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("pattern").unwrap()
 });
 ```
 
-### 3. Timestamp Handling
+## ❌ DON'T
 
-- Timestamp generation logic **MUST** be abstracted into a single utility function
-- **SHOULD** provide an injectable clock abstraction for testing
+- Recompute expensive objects repeatedly  
 
-```rust
-pub trait Clock: Send + Sync {
-    fn now_millis(&self) -> u64;
-}
+## 💡 WHY
 
-pub struct SystemClock;
-impl Clock for SystemClock {
-    fn now_millis(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
-    }
-}
-```
-
-### 4. Avoid Reinventing the Wheel
-
-- **MUST NOT** hand-write logic for Base64, encryption algorithms, etc. that have mature implementations
-- Prioritize using widely validated community crates
+- Reduces runtime cost  
 
 ---
 
-## V. Type Safety
+# 🧠 TYPE SAFETY
 
-### 1. Reduce Dynamic Type Usage
+## ❌ AVOID
 
-- **MUST NOT** abuse `serde_json::Value` in scenarios where generic constraints can be used
-- **AVOID** using `Box<dyn Any + Send + Sync>` as generic storage; prefer generics or trait objects with specific traits
+- `serde_json::Value`  
+- `Box<dyn Any + Send + Sync>`  
 
-### 2. Mutability and Interface Consistency
+## ✅ PREFER
 
-- The choice between `&self` and `&mut self` in trait method signatures **MUST** be consistent
-- If internal state modification through `&self` is needed (e.g., `Arc<RwLock<_>>`), document side effects clearly
+- Generics  
+- Strongly typed structs  
+
+## 💡 WHY
+
+- LLMs perform better with structured types  
+- Prevents runtime errors  
 
 ---
 
-## VI. Interface Consistency
+# 🔁 INTERFACE CONSISTENCY
 
-### 1. Parameter Type Conventions
-
-- Constructor parameter types **SHOULD** be unified: prefer `impl Into<String>` or `&str`
+## ✅ GOOD
 
 ```rust
-// Recommended
-pub fn new(id: impl Into<String>) -> Self { ... }
-// Avoid
-pub fn new(id: String) -> Self { ... }
+pub fn new(id: impl Into<String>) -> Self
 ```
 
-### 2. Builder Pattern Validation
+## ❌ BAD
 
-- Builder methods **MUST** validate invalid input or return `Result`
+```rust
+pub fn new(id: String) -> Self
+```
+
+## BUILDER VALIDATION
 
 ```rust
 pub fn with_weight(mut self, weight: f64) -> Result<Self, &'static str> {
@@ -182,37 +205,33 @@ pub fn with_weight(mut self, weight: f64) -> Result<Self, &'static str> {
 }
 ```
 
-### 3. Naming Conventions
-
-- **MUST NOT** create custom method names that conflict with standard trait method names (e.g., `to_string_output` vs `to_string`)
-
 ---
 
-## VII. Code Correctness
+# 🔢 SAFE CONVERSIONS
 
-### 1. Manual Ord/Eq Implementation
-
-- **MUST** write complete tests covering all branches for manually implemented `Ord` trait
-- Recommend using `derive` or simplified implementations based on discriminants
-
-### 2. Type Conversion Safety
-
-- Numeric type conversions **MUST** explicitly handle potential overflow
+## ❌ BAD
 
 ```rust
-// Avoid
-let ts = as_millis() as u64;
-// Recommended
-let ts = u64::try_from(as_millis()).unwrap_or(u64::MAX);
+let ts = millis as u64;
 ```
+
+## ✅ GOOD
+
+```rust
+let ts = u64::try_from(millis).unwrap_or(u64::MAX);
+```
+
+## 💡 WHY
+
+- Prevents overflow bugs  
 
 ---
 
-## VIII. Serialization and Compatibility
+# 💾 SERIALIZATION
 
-### 1. Message Protocol Versioning
+## ✅ MUST
 
-- Binary serialization **MUST** include version identifiers
+- Include versioning  
 
 ```rust
 #[derive(Serialize, Deserialize)]
@@ -222,12 +241,12 @@ struct MessageEnvelope {
 }
 ```
 
-### 2. Serialization Abstraction
+## ✅ SHOULD
 
-- Message buses **SHOULD** support pluggable serialization backends
+- Use pluggable serializers  
 
 ```rust
-pub trait Serializer: Send + Sync {
+pub trait Serializer {
     fn serialize<T: Serialize>(&self, value: &T) -> Result<Vec<u8>>;
     fn deserialize<T: DeserializeOwned>(&self, data: &[u8]) -> Result<T>;
 }
@@ -235,30 +254,29 @@ pub trait Serializer: Send + Sync {
 
 ---
 
-## IX. Testing Standards
+# 🧪 TESTING STANDARDS
 
-### 1. Test Coverage
+## MUST TEST
 
-- **MUST** include: boundary values, null values, invalid input, concurrent scenarios
-- **MUST NOT** only test the happy path
+- Edge cases  
+- Invalid inputs  
+- Error paths  
+- Concurrency  
 
-### 2. Unit Tests and Integration Tests
+## SHOULD
 
-- **MUST** write unit tests for core logic
-- **SHOULD** write integration tests for inter-module interactions
+- Integration tests  
 
-### 3. Testability Design
+## 💡 WHY
 
-- External dependencies (clock, random numbers, network) **MUST** be injectable through traits for mock implementations
+- Ensures reliability  
+- Prevents silent failures  
 
 ---
 
-## X. Feature Isolation
+# 🧩 FEATURE FLAGS
 
-### 1. Feature Flag Standards
-
-- Dependencies behind feature gates **MUST** be marked with `optional = true` in `Cargo.toml`
-- **MUST NOT** feature gate partial code while the dependency is still compiled unconditionally
+## ✅ CORRECT
 
 ```toml
 [dependencies]
@@ -269,115 +287,97 @@ default = []
 config-loader = ["dep:config"]
 ```
 
----
+## ❌ WRONG
 
-## Checklist Template
-
-| Check Item | Requirement | Status |
-|------------|-------------|--------|
-| Public enums have `#[non_exhaustive]` | Must | ☐ |
-| Public error types are unified | Must | ☐ |
-| No types with same name but different meanings | Forbidden | ☐ |
-| Traits have unnecessary async usage | Check | ☐ |
-| Numeric conversions have overflow risk | Check | ☐ |
-| Time-related code is testable | Must | ☐ |
-| Builders have input validation | Must | ☐ |
-| Regex etc. use caching | Must | ☐ |
-| Integration tests exist | Should | ☐ |
-| Error path test coverage | Must | ☐ |
+- Feature-gating code but not dependency  
 
 ---
 
-## MoFA Microkernel Architecture Standards
+# 🚫 ANTI-PATTERNS
 
-### Architecture Layering
-
-MoFA follows a strict microkernel architecture with clear separation of concerns:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    mofa-sdk (Standard API)                  │
-│  - External standard interface                               │
-│  - Re-exports core types from kernel and foundation          │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              mofa-runtime (Execution Lifecycle)              │
-│  - AgentRegistry, EventLoop, PluginManager                  │
-│  - Dynamic loading and plugin management                      │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│            mofa-foundation (Business Logic)                  │
-│  - ✅ Concrete implementations (InMemoryStorage, SimpleToolRegistry) |
-│  - ✅ Extended types (RichAgentContext, business-specific data)  |
-│  - ❌ FORBIDDEN: Re-defining kernel traits                          │
-│  - ✅ ALLOWED: Importing and extending kernel traits                   │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              mofa-kernel (Microkernel Core)                  │
-│  - ✅ Trait definitions (Tool, Memory, Reasoner, etc.)       │
-│  - ✅ Core data types (AgentInput, AgentOutput, AgentState)  │
-│  - ✅ Base abstractions (MoFAAgent, AgentPlugin)             │
-│  - ❌ FORBIDDEN: Concrete implementations (except test code)   │
-│  - ❌ FORBIDDEN: Business logic                                │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│            mofa-plugins (Plugin Layer)                       │
-│  - Plugin adapters (ToolPluginAdapter)                       │
-│  - Concrete plugin implementations                            │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Core Rules
-
-#### Rule 1: Trait Definition Location
-- ✅ **Kernel Layer**: Define ALL core trait interfaces
-- ❌ **Foundation Layer**: NEVER re-define the same trait from kernel
-- ✅ **Foundation Layer**: CAN import traits from kernel and add extension methods
-
-#### Rule 2: Implementation Location
-- ✅ **Foundation Layer**: Provide ALL concrete implementations
-- ❌ **Kernel Layer**: NO concrete implementations (test code excepted)
-- ✅ **Plugins Layer**: Provide optional advanced implementations
-
-#### Rule 3: Type Exports
-- ✅ **Kernel**: Export only types it defines
-- ✅ **Foundation**: Export only types it implements, NOT re-export kernel traits
-- ✅ **SDK**: Standard re-export of user-facing APIs
-
-#### Rule 4: Data Types
-- ✅ **Kernel Layer**: Base data types (AgentInput, AgentOutput, AgentState, ToolInput, ToolResult)
-- ✅ **Foundation Layer**: Business-specific data types (Session, PromptContext, ComponentOutput)
-- ⚠️ **Boundary**: If a type is part of a trait definition, put it in kernel; if business-specific, put it in foundation
-
-#### Rule 5: Dependency Direction
-```
-Foundation → Kernel (ALLOWED)
-Plugins → Kernel (ALLOWED)
-Plugins → Foundation (ALLOWED)
-Kernel → Foundation (FORBIDDEN! Creates circular dependency)
-```
-
-### Quick Reference
-
-| What | Where | Example |
-|-------|-------|---------|
-| **Trait definitions** | `mofa-kernel` | `Tool`, `Memory`, `Reasoner`, `Coordinator` |
-| **Core data types** | `mofa-kernel` | `AgentInput`, `AgentOutput`, `AgentState` |
-| **Base abstractions** | `mofa-kernel` | `MoFAAgent`, `AgentPlugin` |
-| **Concrete implementations** | `mofa-foundation` | `SimpleToolRegistry`, `InMemoryStorage` |
-| **Business types** | `mofa-foundation` | `Session`, `PromptContext`, `RichAgentContext` |
-| **Plugin implementations** | `mofa-plugins` | `ToolPluginAdapter`, `LLMPlugin` |
+- Using `anyhow` in public APIs  
+- Re-defining kernel traits in foundation  
+- Overusing `serde_json::Value`  
+- Exporting all modules blindly  
+- Using async unnecessarily  
+- Ignoring error handling  
 
 ---
 
-## Code and Documentation Language
+# 🧩 MICROKERNEL RULES
 
-**English is the primary language for all code comments and documentation.**
-- Use English for inline comments, doc comments (`///`, `//!`), and README files
-- Variable, function, and type names should be in English
-- Commit messages should be written in English
-- This ensures consistency and accessibility for international contributors
+## Trait Definition
+
+- MUST be in kernel  
+- NEVER in foundation  
+
+## Implementation
+
+- MUST be in foundation  
+- NEVER in kernel  
+
+## Data Types
+
+- Core types → kernel  
+- Business types → foundation  
+
+---
+
+# 📁 PROJECT STRUCTURE
+
+```
+mofa/
+ ├── kernel/
+ ├── foundation/
+ ├── runtime/
+ ├── sdk/
+ └── plugins/
+```
+
+---
+
+# 🤖 AI ASSISTANT INSTRUCTIONS
+
+When generating code:
+
+1. Always define traits in kernel  
+2. Never add logic in kernel  
+3. Implement logic only in foundation  
+4. Use strong types (NO dynamic types)  
+5. Follow unified error handling  
+6. Avoid unnecessary async  
+7. Validate all inputs  
+8. Ensure testability (inject dependencies)  
+
+---
+
+# ✅ PR CHECKLIST
+
+- [ ] Public enums use `#[non_exhaustive]`  
+- [ ] Unified error handling used  
+- [ ] No `anyhow` in public API  
+- [ ] No trait duplication  
+- [ ] No circular dependencies  
+- [ ] Safe numeric conversions  
+- [ ] Builder validation present  
+- [ ] Regex caching used  
+- [ ] Tests include edge cases  
+- [ ] Error paths tested  
+
+---
+
+# 🔥 FINAL NOTE
+
+This project enforces:
+
+- Strict architecture  
+- Maximum type safety  
+- Zero ambiguity  
+- AI-friendly patterns  
+
+Following these rules ensures:
+- Scalable system design  
+- Maintainable codebase  
+- High-quality AI-generated code  
+
+---
