@@ -56,6 +56,7 @@ members = [
     "native_dataflow",
     "mcp_tools",
     "memory_scheduler_demo",
+    "message_envelope_demo",
     "cli_doctor_demo",
     "capability_discovery",
     "rag_retrieval_demo",

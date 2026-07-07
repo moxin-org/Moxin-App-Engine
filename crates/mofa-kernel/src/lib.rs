@@ -69,6 +69,8 @@ pub mod llm;
 pub mod metrics;
 pub use metrics::*;
 
+// LLM protocol types and kernel-layer inference traits
+pub mod llm;
 // Human-in-the-Loop (HITL) module
 pub mod hitl;
 // Explicit re-exports instead of `pub use hitl::*` to avoid ambiguous

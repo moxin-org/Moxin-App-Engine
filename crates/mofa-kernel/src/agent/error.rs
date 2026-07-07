@@ -157,6 +157,20 @@ pub enum AgentError {
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
+    /// Protocol version mismatch — the sender used a version not supported
+    /// by this receiver. Returned by [`crate::llm::MessageEnvelope::check_version`].
+    #[error(
+        "Protocol version mismatch: received \"{}\" but this build only supports \"{}\"",
+        received,
+        supported
+    )]
+    ProtocolVersionMismatch {
+        /// The version tag found in the received message.
+        received: String,
+        /// The version(s) this build accepts (e.g., `"1"`).
+        supported: String,
+    },
+
     /// An I/O error (file, network, etc.).
     #[error("IO error: {0}")]
     IoError(String),

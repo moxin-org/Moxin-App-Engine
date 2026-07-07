@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -463,6 +464,410 @@ pub struct EmbeddingData {
 pub struct EmbeddingUsage {
     pub prompt_tokens: u32,
     pub total_tokens: u32,
+}
+
+// ============================================================================
+// Protocol Version Negotiation
+// ============================================================================
+
+/// The protocol version carried by a [`MessageEnvelope`].
+///
+/// This discriminant allows receivers to detect messages produced by a newer
+/// protocol revision and handle the mismatch explicitly, rather than failing
+/// silently with a generic deserialization error.
+///
+/// # Versioning Policy
+///
+/// - **`V1`** is the current stable revision of the MoFA inference protocol.
+/// - New variants (e.g. `V2`) will be added in future releases.
+/// - Receivers **MUST** call [`MessageEnvelope::check_version`] and handle
+///   [`crate::agent::AgentError::ProtocolVersionMismatch`] rather than
+///   silently processing messages whose version they do not recognise.
+///
+/// # Wire Format
+///
+/// `ProtocolVersion` serialises as a compact numeric string so the JSON
+/// remains human-readable:
+///
+/// ```json
+/// { "version": "1", "payload": { … } }
+/// ```
+///
+/// Receivers compiled against an older build that do not recognise a future
+/// version tag (`"2"`, `"3"`, …) will deserialise it as [`Unknown`] instead
+/// of returning a hard deserialization error.  The caller must then decide
+/// how to handle the unknown version — typically via
+/// [`MessageEnvelope::check_version`].
+///
+/// [`Unknown`]: ProtocolVersion::Unknown
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ProtocolVersion {
+    /// Version 1 — the first stable revision of the MoFA inference protocol.
+    #[serde(rename = "1")]
+    V1,
+
+    /// Catch-all for any version tag not recognised by this build.
+    ///
+    /// This variant exists solely as a serde deserialization fallback.  Do
+    /// **not** construct it directly; call [`MessageEnvelope::check_version`]
+    /// to surface a [`crate::agent::AgentError::ProtocolVersionMismatch`]
+    /// error when this variant is encountered.
+    #[doc(hidden)]
+    #[serde(other)]
+    Unknown,
+}
+
+impl Default for ProtocolVersion {
+    /// Returns [`ProtocolVersion::V1`], the current stable version.
+    fn default() -> Self {
+        Self::V1
+    }
+}
+
+impl fmt::Display for ProtocolVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::V1 => write!(f, "1"),
+            Self::Unknown => write!(f, "<unknown>"),
+        }
+    }
+}
+
+/// A protocol-version-aware wrapper for any inference message payload.
+///
+/// `MessageEnvelope<T>` pairs a serialisable payload `T` with a
+/// [`ProtocolVersion`] discriminant, allowing receivers to guard against
+/// protocol drift *before* deserialising the payload.  It also carries an
+/// optional `trace_id` for distributed tracing integration.
+///
+/// # Backward Compatibility
+///
+/// `version` uses `#[serde(default)]`, so messages produced before this
+/// envelope was introduced — which therefore lack a `"version"` key —
+/// deserialise cleanly as [`ProtocolVersion::V1`].  No migration step is
+/// required for pre-existing callers.
+///
+/// # Example
+///
+/// ```rust
+/// use mofa_kernel::llm::{MessageEnvelope, ProtocolVersion};
+///
+/// // Wrap a payload.
+/// let env = MessageEnvelope::new("hello".to_string())
+///     .with_trace_id("req-abc-123");
+///
+/// assert_eq!(env.version, ProtocolVersion::V1);
+/// assert!(env.check_version().is_ok());
+///
+/// // Round-trip through JSON.
+/// let json = serde_json::to_string(&env).unwrap();
+/// let back: MessageEnvelope<String> = serde_json::from_str(&json).unwrap();
+/// assert_eq!(env.payload, back.payload);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEnvelope<T> {
+    /// The protocol revision this message was produced under.
+    ///
+    /// Defaults to [`ProtocolVersion::V1`] when the field is absent in the
+    /// serialised form (backward compatibility with pre-envelope messages).
+    #[serde(default)]
+    pub version: ProtocolVersion,
+
+    /// Application-level payload.
+    pub payload: T,
+
+    /// Optional distributed trace identifier.
+    ///
+    /// When present, propagate this value across service boundaries so that
+    /// observability tooling can correlate the full inference request chain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+}
+
+impl<T> MessageEnvelope<T> {
+    /// Wrap `payload` in a [`ProtocolVersion::V1`] envelope with no trace ID.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mofa_kernel::llm::MessageEnvelope;
+    ///
+    /// let env = MessageEnvelope::new(42u32);
+    /// assert_eq!(env.payload, 42u32);
+    /// assert!(env.trace_id.is_none());
+    /// ```
+    pub fn new(payload: T) -> Self {
+        Self {
+            version: ProtocolVersion::V1,
+            payload,
+            trace_id: None,
+        }
+    }
+
+    /// Attach a distributed trace identifier to this envelope.
+    ///
+    /// Accepts anything that converts into a [`String`] (`&str`, `String`,
+    /// `Arc<str>`, …) for ergonomic call sites.
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    /// Verify that this envelope's version is supported by the current build.
+    ///
+    /// Returns `Ok(())` for [`ProtocolVersion::V1`].
+    /// Returns [`Err`] wrapping
+    /// [`crate::agent::AgentError::ProtocolVersionMismatch`] for any
+    /// unrecognised version tag, including [`ProtocolVersion::Unknown`].
+    ///
+    /// Callers **must** invoke this before processing the payload whenever
+    /// the envelope arrived from an untrusted or potentially newer sender.
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::agent::AgentError::ProtocolVersionMismatch`] — the sender
+    ///   used a protocol version not supported by this receiver.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mofa_kernel::llm::MessageEnvelope;
+    ///
+    /// let env = MessageEnvelope::new("ping".to_string());
+    /// assert!(env.check_version().is_ok());
+    /// ```
+    pub fn check_version(&self) -> crate::agent::AgentResult<()> {
+        match self.version {
+            ProtocolVersion::V1 => Ok(()),
+            _ => Err(crate::agent::AgentError::ProtocolVersionMismatch {
+                received: self.version.to_string(),
+                supported: ProtocolVersion::V1.to_string(),
+            }),
+        }
+    }
+
+    /// Transform the payload, preserving `version` and `trace_id`.
+    ///
+    /// Useful for converting between typed payload representations without
+    /// discarding envelope metadata.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use mofa_kernel::llm::MessageEnvelope;
+    ///
+    /// let env = MessageEnvelope::new(10u32).with_trace_id("t");
+    /// let mapped: MessageEnvelope<String> = env.map(|n| n.to_string());
+    /// assert_eq!(mapped.payload, "10");
+    /// assert_eq!(mapped.trace_id.as_deref(), Some("t"));
+    /// ```
+    pub fn map<U, F>(self, f: F) -> MessageEnvelope<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        MessageEnvelope {
+            version: self.version,
+            payload: f(self.payload),
+            trace_id: self.trace_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod protocol_version_tests {
+    use super::*;
+    use crate::agent::AgentError;
+
+    // -----------------------------------------------------------------------
+    // ProtocolVersion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn protocol_version_default_is_v1() {
+        assert_eq!(ProtocolVersion::default(), ProtocolVersion::V1);
+    }
+
+    #[test]
+    fn protocol_version_display_v1() {
+        assert_eq!(ProtocolVersion::V1.to_string(), "1");
+    }
+
+    #[test]
+    fn protocol_version_display_unknown() {
+        assert_eq!(ProtocolVersion::Unknown.to_string(), "<unknown>");
+    }
+
+    #[test]
+    fn protocol_version_v1_serialises_as_string_one() {
+        let json = serde_json::to_string(&ProtocolVersion::V1).unwrap();
+        assert_eq!(json, r#""1""#);
+    }
+
+    #[test]
+    fn protocol_version_v1_deserialises_from_string_one() {
+        let v: ProtocolVersion = serde_json::from_str(r#""1""#).unwrap();
+        assert_eq!(v, ProtocolVersion::V1);
+    }
+
+    /// Any version tag not present in the enum deserialises to `Unknown`
+    /// rather than causing a hard deserialization error.
+    #[test]
+    fn protocol_version_unknown_tag_deserialises_to_unknown_variant() {
+        let v: ProtocolVersion = serde_json::from_str(r#""999""#).unwrap();
+        assert_eq!(v, ProtocolVersion::Unknown);
+    }
+
+    #[test]
+    fn protocol_version_future_tag_is_not_v1() {
+        let v: ProtocolVersion = serde_json::from_str(r#""2""#).unwrap();
+        assert_ne!(v, ProtocolVersion::V1);
+    }
+
+    // -----------------------------------------------------------------------
+    // MessageEnvelope construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn message_envelope_new_sets_v1_and_no_trace_id() {
+        let env = MessageEnvelope::new(42u32);
+        assert_eq!(env.version, ProtocolVersion::V1);
+        assert_eq!(env.payload, 42u32);
+        assert!(env.trace_id.is_none());
+    }
+
+    #[test]
+    fn message_envelope_with_trace_id_sets_field() {
+        let env = MessageEnvelope::new("hello".to_string())
+            .with_trace_id("trace-abc-123");
+        assert_eq!(env.trace_id.as_deref(), Some("trace-abc-123"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serialisation round-trips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn message_envelope_round_trip_with_string_payload() {
+        let original = MessageEnvelope::new("round-trip".to_string())
+            .with_trace_id("tid-001");
+
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: MessageEnvelope<String> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.version, ProtocolVersion::V1);
+        assert_eq!(restored.payload, "round-trip");
+        assert_eq!(restored.trace_id.as_deref(), Some("tid-001"));
+    }
+
+    #[test]
+    fn message_envelope_round_trip_with_numeric_payload() {
+        let original = MessageEnvelope::new(9001u64);
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: MessageEnvelope<u64> = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.payload, 9001u64);
+    }
+
+    /// A message serialised without a `"version"` field (e.g. produced before
+    /// the envelope type was introduced) must deserialise successfully and
+    /// default to V1.
+    #[test]
+    fn message_envelope_missing_version_field_defaults_to_v1() {
+        let legacy_json = r#"{"payload":"legacy"}"#;
+        let env: MessageEnvelope<String> = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(env.version, ProtocolVersion::V1);
+        assert_eq!(env.payload, "legacy");
+    }
+
+    #[test]
+    fn message_envelope_trace_id_omitted_from_json_when_none() {
+        let env = MessageEnvelope::new(1u32);
+        let json = serde_json::to_string(&env).unwrap();
+        // `trace_id` must NOT appear in the JSON when it is None.
+        assert!(!json.contains("trace_id"), "unexpected trace_id in: {json}");
+    }
+
+    #[test]
+    fn message_envelope_trace_id_present_in_json_when_some() {
+        let env = MessageEnvelope::new(1u32).with_trace_id("t-xyz");
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("trace_id"), "trace_id missing from: {json}");
+        assert!(json.contains("t-xyz"));
+    }
+
+    // -----------------------------------------------------------------------
+    // check_version — happy path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_version_returns_ok_for_v1() {
+        let env = MessageEnvelope::new("payload".to_string());
+        assert!(env.check_version().is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // check_version — version mismatch path
+    // -----------------------------------------------------------------------
+
+    /// Receiving a message with an unknown version tag MUST surface a typed
+    /// `ProtocolVersionMismatch` error — not a generic deserialization panic
+    /// or an unrelated error variant.
+    #[test]
+    fn check_version_returns_protocol_version_mismatch_for_unknown_tag() {
+        // Step 1: an envelope with a future/unknown version deserialises OK.
+        let future_json = r#"{"version":"99","payload":"from the future"}"#;
+        let env: MessageEnvelope<String> = serde_json::from_str(future_json).unwrap();
+        assert_eq!(env.version, ProtocolVersion::Unknown);
+
+        // Step 2: check_version() is the guard that surfaces the error.
+        let result = env.check_version();
+        assert!(result.is_err(), "expected Err, got Ok");
+
+        match result.unwrap_err() {
+            AgentError::ProtocolVersionMismatch { received, supported } => {
+                // The supported side must clearly state what this build accepts.
+                assert_eq!(supported, "1");
+                // The received side must be non-empty (the display of Unknown).
+                assert!(!received.is_empty());
+            }
+            other => panic!("expected ProtocolVersionMismatch, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_version_error_message_contains_supported_version() {
+        let future_json = r#"{"version":"42","payload":0}"#;
+        let env: MessageEnvelope<u32> = serde_json::from_str(future_json).unwrap();
+        let err = env.check_version().unwrap_err();
+        // The human-readable error must mention "1" so operators know what to
+        // upgrade to.
+        assert!(
+            err.to_string().contains('1'),
+            "error message should mention supported version \"1\": {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // map() combinator
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn map_transforms_payload_and_preserves_envelope_metadata() {
+        let env = MessageEnvelope::new(10u32).with_trace_id("t-map");
+        let mapped: MessageEnvelope<String> = env.map(|n| n.to_string());
+
+        assert_eq!(mapped.payload, "10");
+        assert_eq!(mapped.version, ProtocolVersion::V1);
+        assert_eq!(mapped.trace_id.as_deref(), Some("t-map"));
+    }
+
+    #[test]
+    fn map_on_envelope_with_unknown_version_preserves_unknown() {
+        let future_json = r#"{"version":"5","payload":0}"#;
+        let env: MessageEnvelope<u32> = serde_json::from_str(future_json).unwrap();
+        let mapped: MessageEnvelope<String> = env.map(|n| n.to_string());
+        assert_eq!(mapped.version, ProtocolVersion::Unknown);
+    }
 }
 
 #[cfg(test)]

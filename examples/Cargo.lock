@@ -4481,6 +4481,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "message_envelope_demo"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mofa-kernel",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "uuid",
+]
+
+[[package]]
 name = "message_graph_executor_runtime"
 version = "0.1.0"
 dependencies = [
