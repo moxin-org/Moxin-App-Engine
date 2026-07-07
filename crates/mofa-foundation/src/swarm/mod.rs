@@ -1,3 +1,4 @@
+pub mod a2a;
 pub mod analyzer;
 pub mod config;
 pub mod dag;

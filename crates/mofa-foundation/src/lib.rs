@@ -72,6 +72,9 @@ pub mod security;
 // Agent capability manifest and discovery registry
 pub mod capability_registry;
 pub use capability_registry::CapabilityRegistry;
+
+// A2A Agent Card ingestion - remote agent discovery via Agent2Agent protocol
+pub use swarm::a2a::{A2AAgentCard, A2ACapabilities, A2ACardIngester, A2ASkill};
 // Error recovery strategies (Backoff, RetryPolicy, CircuitBreaker, retry, fallback_chain)
 pub mod recovery;
 

@@ -108,6 +108,13 @@ impl CapabilityRegistry {
     pub fn is_empty(&self) -> bool {
         self.manifests.is_empty()
     }
+
+    /// Returns the number of registered agents.
+    ///
+    /// Alias for `len` used in A2A ingestion tests to verify idempotency.
+    pub fn agent_count(&self) -> usize {
+        self.manifests.len()
+    }
 }
 
 #[cfg(test)]
