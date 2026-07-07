@@ -6111,6 +6111,14 @@ dependencies = [
 [[package]]
 name = "mofa-smith"
 version = "0.1.0"
+dependencies = [
+ "mofa-monitoring",
+ "serde",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "mofa-testing"
