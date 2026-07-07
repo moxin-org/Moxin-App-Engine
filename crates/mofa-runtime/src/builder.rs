@@ -1100,13 +1100,13 @@ impl MoFARuntime {
         message: &AgentMessage,
     ) -> DoraResult<()> {
         let envelope = MessageEnvelope::from_agent_message(sender_id, message)?.with_topic(topic);
-        self.channel.publish(envelope).await
+        self.channel.publish_legacy(envelope).await
     }
 
     /// 订阅主题
     /// Subscribe to topic
     pub async fn subscribe_topic(&self, agent_id: &str, topic: &str) -> DoraResult<()> {
-        self.channel.subscribe(agent_id, topic).await
+        self.channel.subscribe_legacy(agent_id, topic).await
     }
 
     /// 构建并启动运行时

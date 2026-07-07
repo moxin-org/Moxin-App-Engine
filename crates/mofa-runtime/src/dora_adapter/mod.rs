@@ -21,7 +21,7 @@ mod node;
 mod operator;
 pub mod runtime;
 
-pub use channel::{ChannelConfig, ChannelManager, DoraChannel, MessageEnvelope};
+pub use channel::{ChannelConfig, ChannelManager, DoraChannel, MessageEnvelope, load_persisted_messages};
 pub use dataflow::{DataflowBuilder, DataflowConfig, DataflowState, DoraDataflow, NodeConnection};
 pub use error::{DoraError, DoraResult};
 pub use node::{DoraAgentNode, DoraNodeConfig, NodeEventLoop};

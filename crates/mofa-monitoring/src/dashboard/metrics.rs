@@ -2,6 +2,9 @@
 //!
 //! Provides metrics collection for the monitoring dashboard
 
+use mofa_kernel::bus::metrics::{
+    MessageBusMetrics as KernelBusMetrics, MessageBusObserver, SharedCounters,
+};
 use mofa_kernel::metrics::LLMMetricsSource;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -353,6 +356,9 @@ pub struct MetricsSnapshot {
     pub plugins: Vec<PluginMetrics>,
     /// LLM metrics (model-specific inference metrics)
     pub llm_metrics: Vec<LLMMetrics>,
+    /// Message bus metrics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_bus: Option<KernelBusMetrics>,
     /// Snapshot timestamp
     pub timestamp: u64,
     /// Custom metrics
@@ -491,6 +497,8 @@ pub struct MetricsCollector {
     provider_name: String,
     /// Cached system info (using std sync RwLock for sync access)
     system: Arc<StdRwLock<System>>,
+    /// Message bus counters (optional)
+    bus_counters: Option<SharedCounters>,
 }
 
 impl MetricsCollector {
@@ -508,7 +516,13 @@ impl MetricsCollector {
             llm_metrics_source: None,
             provider_name: "unknown".to_string(),
             system: Arc::new(StdRwLock::new(System::new_all())),
+            bus_counters: None,
         }
+    }
+
+    /// Set message bus counters for automatic collection.
+    pub fn with_bus_counters(&mut self, counters: SharedCounters) {
+        self.bus_counters = Some(counters);
     }
 
     /// Set LLM metrics source for pulling from persistence
@@ -691,12 +705,15 @@ impl MetricsCollector {
 
         let custom = self.registry.collect_all().await;
 
+        let message_bus = self.bus_counters.as_ref().map(|c| c.snapshot());
+
         let snapshot = MetricsSnapshot {
             system,
             agents,
             workflows,
             plugins,
             llm_metrics,
+            message_bus,
             timestamp: now,
             custom,
         };

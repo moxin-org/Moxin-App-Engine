@@ -1,5 +1,22 @@
+// Message bus module
+
+pub mod envelope;
 pub mod error;
+pub mod metrics;
+pub mod traits;
+
+pub use envelope::MessageEnvelope;
+pub use error::BusError;
 pub use error::{BusError, BusResult, IntoBusReport};
+
+pub use traits::{
+    DeliveryGuarantee, DeliveryReceipt, MessageBus, MessageBusError, MessageBusResult, NackAction,
+    ReceiveOptions, ReceivedMessage, SubscribeOptions,
+};
+
+pub use metrics::{
+    MessageBusCounters, MessageBusMetrics, MessageBusObserver, SharedCounters, new_shared_counters,
+};
 
 use crate::agent::AgentMetadata;
 use crate::message::AgentMessage;

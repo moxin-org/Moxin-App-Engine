@@ -9,7 +9,13 @@ pub use plugin::*;
 
 // bus module
 pub mod bus;
-pub use bus::*;
+pub use bus::{
+    MessageBus, MessageBusError, MessageBusResult,
+    MessageEnvelope,
+    DeliveryGuarantee, DeliveryReceipt, NackAction, ReceiveOptions, ReceivedMessage, SubscribeOptions,
+    MessageBusCounters, MessageBusMetrics, MessageBusObserver, SharedCounters, new_shared_counters,
+    AgentBus, CommunicationMode,
+};
 
 // utils module
 pub mod utils;

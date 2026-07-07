@@ -1,7 +1,8 @@
 use mofa_kernel::{
-    DeliveryMode, DeliveryPolicy, MessageEnvelope, MessageGraph, MessageGraphError, MessageNode,
+    DeliveryMode, DeliveryPolicy, MessageGraph, MessageGraphError, MessageNode,
     MessageNodeKind, MessageState, RouteRule, single_message_update, GraphState,
 };
+use mofa_kernel::message_graph::MessageEnvelope;
 use serde_json::json;
 
 fn build_order_routing_graph() -> Result<MessageGraph, Box<dyn std::error::Error>> {
