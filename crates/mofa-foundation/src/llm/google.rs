@@ -444,21 +444,23 @@ fn parse_gemini_sse(resp: reqwest::Response, model: String) -> ChatStream {
                         buf.push_str(&String::from_utf8_lossy(&bytes));
                     }
                     Ok(None) => {
-                        // End of stream. If there is leftover data, try to parse it.
-                        if !buf.trim().is_empty() {
-                            if let Some(json_str) = buf.trim().strip_prefix("data: ") {
-                                if json_str.trim() != "[DONE]" {
-                                    if let Ok(chunk) =
-                                        serde_json::from_str::<GeminiStreamChunk>(json_str)
-                                    {
-                                        let completion =
-                                            gemini_chunk_to_completion(&chunk, &model, is_first);
-                                        return Some((
-                                            Ok(completion),
-                                            (resp, String::new(), model, false),
-                                        ));
-                                    }
-                                }
+                        // End of stream.  Try to parse any leftover data in the buffer.
+                        // Collapse nested `if` / `if let` into a flat chain (fixes
+                        // `clippy::collapsible_if` – issue #1295).
+                        if let Some(json_str) = buf
+                            .trim()
+                            .strip_prefix("data: ")
+                            .filter(|s| !s.trim().is_empty() && s.trim() != "[DONE]")
+                        {
+                            if let Ok(chunk) =
+                                serde_json::from_str::<GeminiStreamChunk>(json_str)
+                            {
+                                let completion =
+                                    gemini_chunk_to_completion(&chunk, &model, is_first);
+                                return Some((
+                                    Ok(completion),
+                                    (resp, String::new(), model, false),
+                                ));
                             }
                         }
                         return None;
