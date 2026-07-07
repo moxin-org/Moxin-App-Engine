@@ -1,0 +1,6 @@
+suite_name: malformed
+llm:
+  responses:
+    - prompt_substring: broken
+      response: ok
+    - not-valid

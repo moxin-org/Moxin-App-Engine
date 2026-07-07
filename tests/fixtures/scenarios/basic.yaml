@@ -1,0 +1,11 @@
+case_name: basic-yaml-scenario
+kind: contract
+target: testing-scenario
+suite_name: fixture-yaml-suite
+llm:
+  model_name: fixture-model
+  responses:
+    - prompt_substring: hello
+      response: hi
+expectations:
+  infer_total: 1

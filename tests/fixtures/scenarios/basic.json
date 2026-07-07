@@ -1,0 +1,15 @@
+{
+  "case_name": "basic-json-scenario",
+  "kind": "contract",
+  "target": "testing-scenario",
+  "suite_name": "fixture-json-suite",
+  "llm": {
+    "model_name": "fixture-model-json",
+    "responses": [
+      { "prompt_substring": "ping", "response": "pong" }
+    ]
+  },
+  "expectations": {
+    "infer_total": 1
+  }
+}
