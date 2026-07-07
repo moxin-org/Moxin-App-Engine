@@ -1,0 +1,11 @@
+[package]
+name = "barge_in_stategraph_poc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+mofa-sdk = { path = "../../crates/mofa-sdk" }
