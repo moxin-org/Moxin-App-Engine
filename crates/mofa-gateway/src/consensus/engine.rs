@@ -724,16 +724,22 @@ impl ConsensusEngine {
         };
 
         if success && !request.entries.is_empty() {
-            // Append new entries
             let start_index = request.prev_log_index.0 as usize;
             for (i, entry) in request.entries.iter().enumerate() {
                 let log_index = start_index + i + 1;
                 if log_index <= state.log.len() {
-                    // Replace conflicting entry
-                    state.log[log_index - 1] = entry.clone();
+                    if state.log[log_index - 1].term != entry.term {
+                        // Conflicting entry (same index, different term) —
+                        // truncate from here and append the rest (Raft §5.3).
+                        state.log.truncate(log_index - 1);
+                        state.log.extend(request.entries[i..].iter().cloned());
+                        break;
+                    }
+                    // Terms match — entry already present, skip
                 } else {
-                    // Append new entry
-                    state.log.push(entry.clone());
+                    // Past end of log — append remaining entries
+                    state.log.extend(request.entries[i..].iter().cloned());
+                    break;
                 }
             }
         }

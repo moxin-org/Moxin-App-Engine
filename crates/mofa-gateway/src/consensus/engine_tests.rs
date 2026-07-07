@@ -88,4 +88,102 @@ mod tests {
             crate::error::ConsensusError::NotLeader(_)
         ));
     }
+
+    /// After a leader change, a follower may carry stale entries from the
+    /// old leader that were never committed.  When the new leader replicates
+    /// its own entries, `handle_append_entries` must truncate the follower's
+    /// log at the first conflict point (Raft §5.3).  Before the fix the
+    /// code replaced conflicting entries in-place but left stale entries
+    /// beyond the new batch untouched.
+    #[tokio::test]
+    async fn test_handle_append_entries_truncates_conflicting_tail() {
+        use crate::consensus::transport::AppendEntriesRequest;
+        use crate::types::{LogEntry, LogIndex, Term};
+
+        let node_id = NodeId::new("follower-1");
+        let storage = Arc::new(RaftStorage::new());
+        let transport = Arc::new(InMemoryTransport::new());
+        let config = RaftConfig::default();
+        let engine = ConsensusEngine::new(node_id.clone(), config, storage, transport);
+
+        // Populate the follower with 5 entries: E1-E3 at term 1, E4-E5 at term 2
+        // (simulates entries from an old leader that were never committed).
+        let mut initial_entries: Vec<LogEntry> = (1..=3)
+            .map(|i| LogEntry {
+                term: Term::new(1),
+                index: LogIndex::new(i),
+                data: vec![i as u8],
+            })
+            .collect();
+        initial_entries.extend((4..=5).map(|i| LogEntry {
+            term: Term::new(2),
+            index: LogIndex::new(i),
+            data: vec![i as u8],
+        }));
+
+        let populate = AppendEntriesRequest {
+            term: Term::new(2),
+            leader_id: NodeId::new("old-leader"),
+            prev_log_index: LogIndex::new(0),
+            prev_log_term: Term::new(0),
+            entries: initial_entries,
+            leader_commit: LogIndex::new(0),
+        };
+        let resp = engine.handle_append_entries(populate).await.unwrap();
+        assert!(resp.success);
+        assert_eq!(resp.last_log_index, LogIndex::new(5));
+
+        // New leader (term 3) sends two entries starting after E3.
+        // E4 and E5 from term 2 conflict and must be replaced.
+        let new_entries = vec![
+            LogEntry {
+                term: Term::new(3),
+                index: LogIndex::new(4),
+                data: vec![40],
+            },
+            LogEntry {
+                term: Term::new(3),
+                index: LogIndex::new(5),
+                data: vec![50],
+            },
+        ];
+
+        let replicate = AppendEntriesRequest {
+            term: Term::new(3),
+            leader_id: NodeId::new("new-leader"),
+            prev_log_index: LogIndex::new(3),
+            prev_log_term: Term::new(1),
+            entries: new_entries,
+            leader_commit: LogIndex::new(0),
+        };
+        let resp = engine.handle_append_entries(replicate).await.unwrap();
+        assert!(resp.success);
+        assert_eq!(resp.last_log_index, LogIndex::new(5));
+
+        // Critical scenario: another new leader sends only ONE entry after E3.
+        // The follower currently has [E1(t1), E2(t1), E3(t1), E4(t3), E5(t3)].
+        // After receiving [E4(t4)], the log must become [E1, E2, E3, E4_newer]
+        // with E5(t3) truncated — it belongs to the previous leader's term.
+        let shorter = AppendEntriesRequest {
+            term: Term::new(4),
+            leader_id: NodeId::new("newest-leader"),
+            prev_log_index: LogIndex::new(3),
+            prev_log_term: Term::new(1),
+            entries: vec![LogEntry {
+                term: Term::new(4),
+                index: LogIndex::new(4),
+                data: vec![44],
+            }],
+            leader_commit: LogIndex::new(0),
+        };
+        let resp = engine.handle_append_entries(shorter).await.unwrap();
+        assert!(resp.success);
+        // If truncation works, log is [E1, E2, E3, E4_newer] — length 4.
+        // Before the fix this returned 5 because E5(t3) was left behind.
+        assert_eq!(
+            resp.last_log_index,
+            LogIndex::new(4),
+            "stale entry E5 from previous term must be truncated"
+        );
+    }
 }
