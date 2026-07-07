@@ -1,0 +1,23 @@
+[package]
+name = "mofa-testing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Adversarial testing module for the MoFA agent framework"
+
+[dependencies]
+mofa-kernel = { path = "../../crates/mofa-kernel" }
+mofa-foundation = { path = "../../crates/mofa-foundation" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+regex = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
