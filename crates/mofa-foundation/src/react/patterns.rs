@@ -695,6 +695,7 @@ impl ParallelAgent {
             let agent = agent.clone();
             let task_input = self.prepare_task(&name, &task);
             let verbose = self.verbose;
+            let timeout_ms = self.timeout_ms;
 
             let span = tracing::info_span!("parallel_agent.branch", agent_name = %name);
             let handle = tokio::spawn(
@@ -704,6 +705,26 @@ impl ParallelAgent {
                     }
 
                     let result = agent.run(&task_input).await;
+                    // Enforce timeout if configured; otherwise run without deadline.
+                    let result = if let Some(ms) = timeout_ms {
+                        let duration = std::time::Duration::from_millis(ms);
+                        match tokio::time::timeout(duration, agent.run(&task_input)).await {
+                            Ok(inner) => inner,
+                            Err(_elapsed) => {
+                                tracing::warn!(
+                                    "[Parallel] Agent '{}' timed out after {}ms",
+                                    name,
+                                    ms
+                                );
+                                Err(crate::llm::types::LLMError::Timeout(format!(
+                                    "Agent '{}' exceeded {}ms timeout",
+                                    name, ms
+                                )))
+                            }
+                        }
+                    } else {
+                        agent.run(&task_input).await
+                    };
 
                     if verbose {
                         match &result {
