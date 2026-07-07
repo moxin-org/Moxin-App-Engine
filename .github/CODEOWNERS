@@ -1,0 +1,11 @@
+# CODEOWNERS
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for all changes - request review from core maintainers
+* @yangrudan @lijingrs
+
+# Additional fine-grained ownership based on area could be added in the future
+# For example:
+# /crates/mofa-kernel/ @yangrudan @lijingrs
+# /crates/mofa-foundation/ @yangrudan @lijingrs
+# etc.
