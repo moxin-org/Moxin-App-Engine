@@ -7,6 +7,7 @@ use super::schema::*;
 use super::{DslError, DslResult};
 use crate::llm::LLMAgent;
 use crate::workflow::builder::WorkflowBuilder;
+use crate::workflow::node::WorkflowNode;
 use crate::workflow::state::WorkflowValue;
 use std::collections::HashMap;
 use std::fs;
@@ -17,6 +18,8 @@ use std::sync::Arc;
 pub struct WorkflowDslParser;
 
 impl WorkflowDslParser {
+    const SUPPORTED_OPERATORS: [&str; 6] = ["==", "!=", ">=", "<=", ">", "<"];
+
     /// Parse workflow definition from YAML string
     pub fn from_yaml(content: &str) -> DslResult<WorkflowDefinition> {
         let value: serde_yaml::Value = serde_yaml::from_str(content)?;
@@ -212,12 +215,26 @@ impl WorkflowDslParser {
                     builder = builder.llm_agent(&id, &name, llm_agent);
                 }
             }
-            NodeDefinition::Condition { id, name, .. } => {
-                // Condition nodes need special handling - use the agent node type
-                // with a custom executor that evaluates to true/false
-                builder = builder.task(&id, &name, |_ctx, _input| async move {
-                    Ok(WorkflowValue::Bool(true))
-                });
+            NodeDefinition::Condition {
+                id,
+                name,
+                condition,
+                ..
+            } => {
+                if let ConditionDef::Value { operator, .. } = &condition
+                    && !Self::SUPPORTED_OPERATORS.contains(&operator.as_str())
+                {
+                    return Err(DslError::Validation(format!(
+                        "Unsupported condition operator: {}. Supported operators: {}",
+                        operator,
+                        Self::SUPPORTED_OPERATORS.join(", ")
+                    )));
+                }
+
+                builder = builder.node(WorkflowNode::condition(&id, &name, move |_ctx, input| {
+                    let condition = condition.clone();
+                    async move { Self::evaluate_condition_def(&condition, &input) }
+                }));
             }
             NodeDefinition::Parallel { id, name, .. } => {
                 // Parallel node - just mark it, actual parallelism handled by edges
@@ -271,5 +288,303 @@ impl WorkflowDslParser {
         }
 
         Ok(builder)
+    }
+
+    fn evaluate_condition_def(condition: &ConditionDef, input: &WorkflowValue) -> bool {
+        match condition {
+            ConditionDef::Expression { expr } => Self::evaluate_expression(expr, input),
+            ConditionDef::Value {
+                field,
+                operator,
+                value,
+            } => {
+                let Some(left) = Self::extract_field_value(input, field) else {
+                    return false;
+                };
+                Self::compare_values(&left, operator, value)
+            }
+        }
+    }
+
+    fn evaluate_expression(expr: &str, input: &WorkflowValue) -> bool {
+        let expr = expr.trim();
+        if expr.eq_ignore_ascii_case("true") {
+            return true;
+        }
+        if expr.eq_ignore_ascii_case("false") {
+            return false;
+        }
+
+        for operator in Self::SUPPORTED_OPERATORS {
+            if let Some((left, right)) = expr.split_once(operator) {
+                let lhs = left.trim();
+                let rhs = right.trim();
+                let Some(left_val) = Self::extract_field_value(input, lhs) else {
+                    return false;
+                };
+                let right_val = Self::parse_literal_value(rhs);
+                return Self::compare_values(&left_val, operator, &right_val);
+            }
+        }
+
+        Self::extract_field_value(input, expr)
+            .as_ref()
+            .is_some_and(Self::truthy)
+    }
+
+    fn extract_field_value(input: &WorkflowValue, field: &str) -> Option<serde_json::Value> {
+        let mut current = serde_json::to_value(input).ok()?;
+        let normalized = field.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+
+        if normalized == "input" {
+            return Some(current);
+        }
+
+        let path = normalized.strip_prefix("input.").unwrap_or(normalized);
+        for segment in path.split('.') {
+            let key = segment.trim();
+            if key.is_empty() {
+                return None;
+            }
+            current = current.get(key)?.clone();
+        }
+        Some(current)
+    }
+
+    fn parse_literal_value(raw: &str) -> serde_json::Value {
+        let value = raw.trim();
+        if value.is_empty() {
+            return serde_json::Value::Null;
+        }
+
+        if (value.starts_with('\'') && value.ends_with('\''))
+            || (value.starts_with('"') && value.ends_with('"'))
+        {
+            return serde_json::Value::String(value[1..value.len() - 1].to_string());
+        }
+
+        serde_json::from_str(value).unwrap_or_else(|_| serde_json::Value::String(value.to_string()))
+    }
+
+    fn compare_values(left: &serde_json::Value, operator: &str, right: &serde_json::Value) -> bool {
+        match operator {
+            "==" => left == right,
+            "!=" => left != right,
+            ">" | ">=" | "<" | "<=" => {
+                if let (Some(l), Some(r)) = (left.as_f64(), right.as_f64()) {
+                    return match operator {
+                        ">" => l > r,
+                        ">=" => l >= r,
+                        "<" => l < r,
+                        "<=" => l <= r,
+                        _ => false,
+                    };
+                }
+
+                if let (Some(l), Some(r)) = (left.as_str(), right.as_str()) {
+                    return match operator {
+                        ">" => l > r,
+                        ">=" => l >= r,
+                        "<" => l < r,
+                        "<=" => l <= r,
+                        _ => false,
+                    };
+                }
+
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn truthy(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Null => false,
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::Number(n) => n.as_f64().is_some_and(|v| v != 0.0),
+            serde_json::Value::String(s) => !s.is_empty(),
+            serde_json::Value::Array(v) => !v.is_empty(),
+            serde_json::Value::Object(m) => !m.is_empty(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::{ExecutorConfig, WorkflowExecutor, WorkflowStatus};
+
+    #[tokio::test]
+    async fn test_condition_expression_routes_to_true_branch() {
+        let yaml = r#"
+metadata:
+  id: expression_routing
+  name: Expression Routing
+
+nodes:
+  - type: start
+    id: start
+  - type: condition
+    id: route
+    name: Route
+    condition:
+      condition_type: expression
+      expr: "input.score >= 10"
+  - type: task
+    id: low
+    name: Low Branch
+    executor_type: none
+  - type: task
+    id: high
+    name: High Branch
+    executor_type: none
+  - type: end
+    id: end
+
+edges:
+  - from: start
+    to: route
+  - from: route
+    to: high
+    condition: "true"
+  - from: route
+    to: low
+    condition: "false"
+  - from: high
+    to: end
+  - from: low
+    to: end
+"#;
+
+        let definition = WorkflowDslParser::from_yaml(yaml).expect("yaml should parse");
+        let graph = WorkflowDslParser::build_with_agents(definition, &HashMap::new())
+            .await
+            .expect("graph should build");
+
+        let executor = WorkflowExecutor::new(ExecutorConfig::default());
+        let mut input = HashMap::new();
+        input.insert("score".to_string(), WorkflowValue::Int(20));
+
+        let record = executor
+            .execute(&graph, WorkflowValue::Map(input))
+            .await
+            .expect("execution should succeed");
+
+        assert!(matches!(record.status, WorkflowStatus::Completed));
+        assert_eq!(
+            record.outputs.get("route").and_then(WorkflowValue::as_str),
+            Some("true")
+        );
+        assert!(record.outputs.contains_key("high"));
+        assert!(!record.outputs.contains_key("low"));
+    }
+
+    #[tokio::test]
+    async fn test_condition_value_routes_to_false_branch() {
+        let yaml = r#"
+metadata:
+  id: value_routing
+  name: Value Routing
+
+nodes:
+  - type: start
+    id: start
+  - type: condition
+    id: route
+    name: Route
+    condition:
+      condition_type: value
+      field: category
+      operator: "=="
+      value: "billing"
+  - type: task
+    id: billing
+    name: Billing Branch
+    executor_type: none
+  - type: task
+    id: general
+    name: General Branch
+    executor_type: none
+  - type: end
+    id: end
+
+edges:
+  - from: start
+    to: route
+  - from: route
+    to: billing
+    condition: "true"
+  - from: route
+    to: general
+    condition: "false"
+  - from: billing
+    to: end
+  - from: general
+    to: end
+"#;
+
+        let definition = WorkflowDslParser::from_yaml(yaml).expect("yaml should parse");
+        let graph = WorkflowDslParser::build_with_agents(definition, &HashMap::new())
+            .await
+            .expect("graph should build");
+
+        let executor = WorkflowExecutor::new(ExecutorConfig::default());
+        let mut input = HashMap::new();
+        input.insert(
+            "category".to_string(),
+            WorkflowValue::String("general".to_string()),
+        );
+
+        let record = executor
+            .execute(&graph, WorkflowValue::Map(input))
+            .await
+            .expect("execution should succeed");
+
+        assert!(matches!(record.status, WorkflowStatus::Completed));
+        assert!(record.outputs.contains_key("general"));
+        assert!(!record.outputs.contains_key("billing"));
+    }
+
+    #[tokio::test]
+    async fn test_condition_value_rejects_unsupported_operator() {
+        let yaml = r#"
+metadata:
+  id: bad_operator
+  name: Bad Operator
+
+nodes:
+  - type: start
+    id: start
+  - type: condition
+    id: route
+    name: Route
+    condition:
+      condition_type: value
+      field: score
+      operator: "contains"
+      value: 10
+  - type: end
+    id: end
+
+edges:
+  - from: start
+    to: route
+  - from: route
+    to: end
+"#;
+
+        let definition = WorkflowDslParser::from_yaml(yaml).expect("yaml should parse");
+        let err = match WorkflowDslParser::build_with_agents(definition, &HashMap::new()).await {
+            Ok(_) => panic!("unsupported operator should be rejected"),
+            Err(err) => err,
+        };
+
+        match err {
+            DslError::Validation(msg) => assert!(msg.contains("Unsupported condition operator")),
+            other => panic!("expected validation error, got: {:?}", other),
+        }
     }
 }
