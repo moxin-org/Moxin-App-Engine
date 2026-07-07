@@ -1,0 +1,38 @@
+name: document-extraction-eval
+description: Tests swarm extraction accuracy on synthetic business documents.
+
+cases:
+  - id: case-001
+    description: extract revenue figure from Q3 report
+    inputs:
+      document: "Total revenue for Q3 2025 reached 1.2 million dollars, up 18% YoY."
+    expected_output: "revenue"
+    tags: [extraction, finance]
+
+  - id: case-002
+    description: identify chip model from laptop listing
+    inputs:
+      document: "MacBook Pro 16-inch with M3 chip, 32GB RAM, 1TB SSD, priced at 2499 USD."
+    expected_output: "M3"
+    tags: [extraction, product]
+
+  - id: case-003
+    description: summarise incident report for latency and timeout
+    inputs:
+      document: "P1 incident on 2025-11-14. Root cause: database latency spike caused timeout cascade."
+    expected_output: "latency, timeout"
+    tags: [extraction, ops]
+
+  - id: case-004
+    description: detect compliance risk keywords in audit note
+    inputs:
+      document: "Auditor flagged missing GDPR consent forms and incomplete data retention policy."
+    expected_output: "GDPR, compliance"
+    tags: [extraction, compliance]
+
+  - id: case-005
+    description: detect churn signal in a positive customer review
+    inputs:
+      document: "Excellent product quality and fast shipping. Will definitely recommend to colleagues."
+    expected_output: "churn, cancel"
+    tags: [classification, churn]

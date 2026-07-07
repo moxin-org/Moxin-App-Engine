@@ -7,7 +7,25 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[[bin]]
+name = "mofa-smith"
+path = "src/main.rs"
+
 [dependencies]
+mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+comfy-table = "7"
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true
