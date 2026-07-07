@@ -6015,6 +6015,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mofa-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "mofa-foundation",
+ "mofa-smith",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "mofa-plugins"
 version = "0.1.0"
 dependencies = [
@@ -6038,6 +6056,7 @@ dependencies = [
  "reqwest",
  "rhai",
  "rodio",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -6111,6 +6130,15 @@ dependencies = [
 [[package]]
 name = "mofa-smith"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mofa-foundation",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "mofa-testing"

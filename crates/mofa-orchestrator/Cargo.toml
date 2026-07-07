@@ -1,0 +1,28 @@
+[package]
+name = "mofa-orchestrator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Cognitive Swarm Orchestrator — high-level entry point for multi-agent goal execution"
+
+[dependencies]
+mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
+mofa-smith = { path = "../mofa-smith", version = "0.1" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
