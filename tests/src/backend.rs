@@ -11,6 +11,29 @@ use std::sync::{Arc, RwLock};
 
 type ResponseSequences = Vec<(String, VecDeque<String>)>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferenceUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageTotals {
+    pub successful_calls: usize,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCostRates {
+    input_per_1k_tokens_usd: f64,
+    output_per_1k_tokens_usd: f64,
+}
+
 /// Deterministic mock implementation of [`ModelOrchestrator`].
 ///
 /// Supports first-match response rules, sequenced responses, failure injection,
@@ -27,6 +50,8 @@ pub struct MockLLMBackend {
     response_sequences: Arc<RwLock<ResponseSequences>>,
     call_count: Arc<AtomicUsize>,
     rate_limit: Arc<RwLock<Option<RateLimit>>>,
+    token_cost_rates: Arc<RwLock<TokenCostRates>>,
+    usage_history: Arc<RwLock<Vec<(String, InferenceUsage)>>>,
 }
 
 struct RateLimit {
@@ -55,6 +80,11 @@ impl MockLLMBackend {
             response_sequences: Arc::new(RwLock::new(Vec::new())),
             call_count: Arc::new(AtomicUsize::new(0)),
             rate_limit: Arc::new(RwLock::new(None)),
+            token_cost_rates: Arc::new(RwLock::new(TokenCostRates {
+                input_per_1k_tokens_usd: 0.0,
+                output_per_1k_tokens_usd: 0.0,
+            })),
+            usage_history: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -123,6 +153,68 @@ impl MockLLMBackend {
         self.call_count.store(0, Ordering::Relaxed);
     }
 
+    /// Configure deterministic token pricing used for usage accounting.
+    pub fn set_token_cost_rates(
+        &self,
+        input_per_1k_tokens_usd: f64,
+        output_per_1k_tokens_usd: f64,
+    ) {
+        *self.token_cost_rates.write().expect("lock poisoned") = TokenCostRates {
+            input_per_1k_tokens_usd,
+            output_per_1k_tokens_usd,
+        };
+    }
+
+    /// Clear tracked usage history for successful inferences.
+    pub fn reset_usage_accounting(&self) {
+        self.usage_history.write().expect("lock poisoned").clear();
+    }
+
+    /// Return usage for the last successful inference.
+    pub fn last_usage(&self) -> Option<InferenceUsage> {
+        self.usage_history
+            .read()
+            .expect("lock poisoned")
+            .last()
+            .map(|(_, usage)| usage.clone())
+    }
+
+    /// Return prompt + usage pairs for successful inferences.
+    pub fn usage_history(&self) -> Vec<(String, InferenceUsage)> {
+        self.usage_history.read().expect("lock poisoned").clone()
+    }
+
+    /// Alias for [`usage_history`] following the crate's `get_*` accessor style.
+    pub fn get_usage_history(&self) -> Vec<(String, InferenceUsage)> {
+        self.usage_history()
+    }
+
+    /// Aggregate usage totals for successful inferences.
+    pub fn usage_totals(&self) -> UsageTotals {
+        let history = self.usage_history.read().expect("lock poisoned");
+        let mut totals = UsageTotals {
+            successful_calls: history.len(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            total_cost_usd: 0.0,
+        };
+
+        for (_, usage) in history.iter() {
+            totals.prompt_tokens += usage.prompt_tokens as u64;
+            totals.completion_tokens += usage.completion_tokens as u64;
+            totals.total_tokens += usage.total_tokens as u64;
+            totals.total_cost_usd += usage.cost_usd;
+        }
+        totals.total_cost_usd = round_cost(totals.total_cost_usd);
+        totals
+    }
+
+    /// Alias for [`usage_totals`] following the crate's `get_*` accessor style.
+    pub fn get_usage_totals(&self) -> UsageTotals {
+        self.usage_totals()
+    }
+
     /// Look up the response for a given prompt.
     /// Sequence responses take priority over static rules.
     fn resolve(&self, prompt: &str) -> String {
@@ -148,6 +240,32 @@ impl MockLLMBackend {
         }
         self.fallback.clone()
     }
+
+    fn estimate_tokens(text: &str) -> u32 {
+        text.split_whitespace().count() as u32
+    }
+
+    fn build_usage(&self, prompt: &str, response: &str) -> InferenceUsage {
+        let prompt_tokens = Self::estimate_tokens(prompt);
+        let completion_tokens = Self::estimate_tokens(response);
+        let total_tokens = prompt_tokens + completion_tokens;
+        let rates = self.token_cost_rates.read().expect("lock poisoned").clone();
+
+        let prompt_cost = (prompt_tokens as f64 / 1000.0) * rates.input_per_1k_tokens_usd;
+        let completion_cost = (completion_tokens as f64 / 1000.0) * rates.output_per_1k_tokens_usd;
+        let cost_usd = round_cost(prompt_cost + completion_cost);
+
+        InferenceUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            cost_usd,
+        }
+    }
+}
+
+fn round_cost(value: f64) -> f64 {
+    (value * 1_000_000_000.0).round() / 1_000_000_000.0
 }
 
 #[async_trait]
@@ -242,7 +360,14 @@ impl ModelOrchestrator for MockLLMBackend {
             }
         }
 
-        Ok(self.resolve(input))
+        let response = self.resolve(input);
+        let usage = self.build_usage(input, &response);
+        self.usage_history
+            .write()
+            .expect("lock poisoned")
+            .push((input.to_string(), usage));
+
+        Ok(response)
     }
 
     async fn route_by_type(&self, task: &ModelType) -> OrchestratorResult<String> {
