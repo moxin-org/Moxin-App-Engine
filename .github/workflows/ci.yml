@@ -40,6 +40,24 @@ jobs:
       - name: Run clippy (fail fast on errors)
         run: cargo clippy --workspace --all-features -- -D errors
 
+  security:
+    name: Security and License Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Security audit (cargo-audit)
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dependency and license policy (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
