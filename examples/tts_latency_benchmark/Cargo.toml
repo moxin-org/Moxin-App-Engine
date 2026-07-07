@@ -1,0 +1,13 @@
+[package]
+name = "tts_latency_benchmark"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rodio = "0.19"
+dotenvy = "0.15"
