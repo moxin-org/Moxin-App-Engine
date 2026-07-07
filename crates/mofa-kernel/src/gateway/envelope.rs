@@ -265,13 +265,14 @@ mod tests {
     }
 
     #[test]
-    fn envelope_serializes_without_deadline_field() {
+    fn envelope_serializes_without_deadline_field() -> Result<(), Box<dyn std::error::Error>> {
         let env = RequestEnvelope::new("r1", json!({"key": "val"}), loopback())
             .with_deadline(Instant::now() + Duration::from_secs(10));
-        let json = serde_json::to_string(&env).unwrap();
+        let json = serde_json::to_string(&env)?;
         assert!(!json.contains("deadline"));
         assert!(json.contains("correlation_id"));
         assert!(json.contains("created_at_ms"));
+        Ok(())
     }
 
     // ── GatewayResponse ──────────────────────────────────────────────────────
@@ -311,14 +312,15 @@ mod tests {
     }
 
     #[test]
-    fn gateway_response_serializes() {
+    fn gateway_response_serializes() -> Result<(), Box<dyn std::error::Error>> {
         let env = RequestEnvelope::new("r1", json!({}), loopback());
         let resp = AgentResponse::new(200, json!({"result": "ok"}), "agent-a", &env);
-        let json = serde_json::to_string(&resp).unwrap();
+        let json = serde_json::to_string(&resp)?;
         assert!(json.contains("status_code"));
         assert!(json.contains("latency_ms"));
         assert!(json.contains("agent_id"));
         assert!(json.contains("correlation_id"));
+        Ok(())
     }
 
     #[test]

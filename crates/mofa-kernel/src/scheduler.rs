@@ -425,16 +425,17 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn missed_tick_policy_round_trip() {
+    fn missed_tick_policy_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         for policy in [
             MissedTickPolicy::Skip,
             MissedTickPolicy::Burst,
             MissedTickPolicy::DelaySingle,
         ] {
-            let json = serde_json::to_string(&policy).unwrap();
-            let back: MissedTickPolicy = serde_json::from_str(&json).unwrap();
+            let json = serde_json::to_string(&policy)?;
+            let back: MissedTickPolicy = serde_json::from_str(&json)?;
             assert_eq!(policy, back, "round-trip failed for {:?}", policy);
         }
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -535,7 +536,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn schedule_definition_json_round_trip() {
+    fn schedule_definition_json_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let def = ScheduleDefinition::new_interval(
             "rt-test",
             "agent-rt",
@@ -543,14 +544,14 @@ mod tests {
             3,
             AgentInput::text("data"),
             MissedTickPolicy::DelaySingle,
-        )
-        .unwrap();
-        let json = serde_json::to_string(&def).unwrap();
-        let back: ScheduleDefinition = serde_json::from_str(&json).unwrap();
+        )?;
+        let json = serde_json::to_string(&def)?;
+        let back: ScheduleDefinition = serde_json::from_str(&json)?;
         assert_eq!(back.schedule_id, "rt-test");
         assert_eq!(back.interval_ms, Some(500));
         assert_eq!(back.max_concurrent, 3);
         assert_eq!(back.missed_tick_policy, MissedTickPolicy::DelaySingle);
+        Ok(())
     }
 
     // ------------------------------------------------------------------

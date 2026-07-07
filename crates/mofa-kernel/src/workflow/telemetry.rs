@@ -398,23 +398,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_debug_event_serialization() {
+    fn test_debug_event_serialization() -> Result<(), Box<dyn std::error::Error>> {
         let event = DebugEvent::NodeStart {
             node_id: "process".to_string(),
             timestamp_ms: 1700000000000,
             state_snapshot: json!({"messages": ["hello"]}),
         };
 
-        let serialized = serde_json::to_string(&event).unwrap();
-        let deserialized: DebugEvent = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&event)?;
+        let deserialized: DebugEvent = serde_json::from_str(&serialized)?;
 
         assert_eq!(deserialized.event_type(), "node_start");
         assert_eq!(deserialized.node_id(), Some("process"));
         assert_eq!(deserialized.timestamp_ms(), 1700000000000);
+        Ok(())
     }
 
     #[test]
-    fn test_debug_event_all_variants_serialize() {
+    fn test_debug_event_all_variants_serialize() -> Result<(), Box<dyn std::error::Error>> {
         let events = vec![
             DebugEvent::WorkflowStart {
                 workflow_id: "wf-1".to_string(),
@@ -453,11 +454,12 @@ mod tests {
         ];
 
         for event in &events {
-            let json = serde_json::to_string(event).unwrap();
-            let round_trip: DebugEvent = serde_json::from_str(&json).unwrap();
+            let json = serde_json::to_string(event)?;
+            let round_trip: DebugEvent = serde_json::from_str(&json)?;
             assert_eq!(event.event_type(), round_trip.event_type());
             assert_eq!(event.timestamp_ms(), round_trip.timestamp_ms());
         }
+        Ok(())
     }
 
     #[test]
@@ -504,12 +506,13 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_session_serialization() {
+    fn test_debug_session_serialization() -> Result<(), Box<dyn std::error::Error>> {
         let session = DebugSession::new("s-1", "wf-1", "exec-1");
-        let json = serde_json::to_string(&session).unwrap();
-        let round_trip: DebugSession = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&session)?;
+        let round_trip: DebugSession = serde_json::from_str(&json)?;
         assert_eq!(round_trip.session_id, "s-1");
         assert_eq!(round_trip.status, "running");
+        Ok(())
     }
 
     #[test]

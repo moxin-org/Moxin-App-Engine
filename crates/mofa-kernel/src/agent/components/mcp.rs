@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tool_info_serialization() {
+    fn test_mcp_tool_info_serialization() -> crate::agent::error::AgentResult<()> {
         let tool = McpToolInfo {
             name: "list_repos".to_string(),
             description: "List GitHub repositories".to_string(),
@@ -341,9 +341,10 @@ mod tests {
             }),
         };
 
-        let json = serde_json::to_string(&tool).unwrap();
-        let deserialized: McpToolInfo = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&tool)?;
+        let deserialized: McpToolInfo = serde_json::from_str(&json)?;
         assert_eq!(deserialized.name, "list_repos");
+        Ok(())
     }
 
     #[test]

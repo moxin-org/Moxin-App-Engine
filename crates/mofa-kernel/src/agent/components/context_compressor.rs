@@ -13,13 +13,14 @@
 //!
 //! ```rust,ignore
 //! use mofa_kernel::agent::components::context_compressor::{ContextCompressor, CompressionStrategy};
+//! use mofa_kernel::agent::error::AgentResult;
 //!
-//! async fn ensure_fits(compressor: &dyn ContextCompressor, messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+//! async fn ensure_fits(compressor: &dyn ContextCompressor, messages: Vec<ChatMessage>) -> AgentResult<Vec<ChatMessage>> {
 //!     let tokens = compressor.count_tokens(&messages);
 //!     if tokens > 4096 {
-//!         compressor.compress(messages, 4096).await.unwrap()
+//!         compressor.compress(messages, 4096).await
 //!     } else {
-//!         messages
+//!         Ok(messages)
 //!     }
 //! }
 //! ```
