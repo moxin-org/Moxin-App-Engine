@@ -63,6 +63,12 @@ pub struct PluginSpecEntry {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_id: Option<String>,
+    /// semver string recorded at install time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// base64-encoded Ed25519 public key stored for future revocation checks
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +299,8 @@ fn seed_default_specs(
         }),
         description: Some("Built-in HTTP helper plugin".to_string()),
         repo_id: Some(DEFAULT_PLUGIN_REPO_ID.to_string()),
+        version: Some("1.0.0".to_string()),
+        publisher_key: None,
     };
     if plugin_store.get(&default_plugin.id)?.is_none() {
         plugin_store.save(&default_plugin.id, &default_plugin)?;

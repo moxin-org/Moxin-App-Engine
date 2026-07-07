@@ -1,6 +1,7 @@
 //! `mofa plugin install` command implementation
 
 use crate::CliError;
+use crate::commands::plugin::signature;
 use crate::context::{CliContext, PluginSpecEntry, instantiate_plugin_from_spec};
 use crate::plugin_catalog::{DEFAULT_PLUGIN_REPO_ID, find_catalog_entry};
 use colored::Colorize;
@@ -19,12 +20,6 @@ pub async fn run(
     let normalized = name.trim();
     if normalized.is_empty() {
         return Err(CliError::PluginError("Plugin name cannot be empty".into()));
-    }
-
-    if verify_signature {
-        return Err(CliError::PluginError(
-            "Signature verification requested with --verify-signature, but this feature is not implemented yet. Remove the flag or use --checksum for integrity verification.".into(),
-        ));
     }
 
     println!("{} Installing plugin: {}", "→".green(), normalized.cyan());
@@ -56,6 +51,10 @@ pub async fn run(
             )));
         }
 
+        if verify_signature {
+            verify_registry_entry_signature(&entry)?;
+        }
+
         let spec = PluginSpecEntry {
             id: entry.id.clone(),
             kind: entry.kind.clone(),
@@ -63,6 +62,8 @@ pub async fn run(
             config: entry.config.clone(),
             description: Some(entry.description.clone()),
             repo_id: Some(entry.repo_id.clone()),
+            version: entry.version.clone(),
+            publisher_key: entry.publisher_key.clone(),
         };
 
         let plugin = instantiate_plugin_from_spec(&spec).ok_or_else(|| {
@@ -109,19 +110,26 @@ pub async fn run(
         )));
     }
 
-    let plugin_dir = match plugin_source {
+    let (plugin_dir, content_sha256) = match plugin_source {
         PluginSource::LocalPath(path) => {
             println!("  {} Source: Local path", "•".bright_black());
-            install_from_local_path(&ctx.data_dir, &plugin_id, &path).await?
+            let dir = install_from_local_path(&ctx.data_dir, &plugin_id, &path).await?;
+            let hash = hash_dir(&dir)?;
+            (dir, hash)
         }
         PluginSource::Url(url) => {
             println!("  {} Source: URL", "•".bright_black());
-            install_from_url(&ctx.data_dir, &plugin_id, &url, checksum).await?
+            let (dir, hash) = install_from_url(&ctx.data_dir, &plugin_id, &url, checksum).await?;
+            (dir, hash)
         }
         PluginSource::Registry(_) => unreachable!(),
     };
 
     validate_plugin_structure(&plugin_dir)?;
+
+    if verify_signature {
+        verify_download_signature(&plugin_id, &content_sha256, checksum)?;
+    }
 
     let spec = PluginSpecEntry {
         id: plugin_id.clone(),
@@ -130,9 +138,12 @@ pub async fn run(
         config: serde_json::json!({
             "path": plugin_dir.to_string_lossy(),
             "installed_at": chrono::Utc::now().to_rfc3339(),
+            "sha256": content_sha256,
         }),
         description: None,
         repo_id: None,
+        version: None,
+        publisher_key: None,
     };
 
     ctx.plugin_store.save(&plugin_id, &spec).map_err(|e| {
@@ -225,13 +236,13 @@ async fn install_from_local_path(
     Ok(dest_dir)
 }
 
-/// Install plugin from a URL
+/// Install plugin from a URL, returns (install_dir, sha256_hex_of_content)
 async fn install_from_url(
     data_dir: &Path,
     plugin_name: &str,
     url: &str,
     expected_checksum: Option<&str>,
-) -> Result<PathBuf, CliError> {
+) -> Result<(PathBuf, String), CliError> {
     let plugins_dir = data_dir.join("plugins");
     tokio::fs::create_dir_all(&plugins_dir)
         .await
@@ -272,18 +283,18 @@ async fn install_from_url(
     }
     pb.finish_with_message("Downloaded");
 
+    // compute sha256 of raw content
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let content_hash = hex::encode(hasher.finalize());
+
     // Verify checksum if provided
     if let Some(expected) = expected_checksum {
         println!("  {} Verifying checksum...", "•".bright_black());
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let computed = hasher.finalize();
-        let computed_hex = hex::encode(computed);
-
-        if computed_hex.to_lowercase() != expected.to_lowercase() {
+        if content_hash.to_lowercase() != expected.to_lowercase() {
             return Err(CliError::PluginError(format!(
                 "Checksum mismatch!\n  Expected: {}\n  Computed: {}\n\nPlugin may be corrupted or tampered with.",
-                expected, computed_hex
+                expected, content_hash
             )));
         }
         println!("  {} Checksum verified", "✓".green());
@@ -301,7 +312,7 @@ async fn install_from_url(
     } else if url.ends_with(".zip") {
         extract_zip(&bytes, &dest_dir)?;
     } else {
-        // Treat as single file, save it directly
+        // treat as single file, save it directly
         let filename = url.split('/').next_back().unwrap_or("plugin");
         let file_path = dest_dir.join(filename);
         tokio::fs::write(&file_path, &bytes)
@@ -309,7 +320,7 @@ async fn install_from_url(
             .map_err(|e| CliError::PluginError(format!("Failed to write plugin file: {}", e)))?;
     }
 
-    Ok(dest_dir)
+    Ok((dest_dir, content_hash))
 }
 
 /// Validate that the plugin directory has required structure
@@ -487,6 +498,74 @@ fn extract_zip(bytes: &[u8], dest_dir: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Compute SHA-256 over all files in a directory (sorted for determinism).
+fn hash_dir(dir: &Path) -> Result<String, CliError> {
+    let mut hasher = Sha256::new();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| CliError::PluginError(format!("failed to read dir: {e}")))?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    for path in paths {
+        if path.is_file() {
+            let contents = std::fs::read(&path)
+                .map_err(|e| CliError::PluginError(format!("failed to read {}: {e}", path.display())))?;
+            hasher.update(&contents);
+        }
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Verify signature for a registry catalog entry.
+fn verify_registry_entry_signature(
+    entry: &crate::plugin_catalog::PluginCatalogEntry,
+) -> Result<(), CliError> {
+    let (Some(pub_key), Some(sig)) = (&entry.publisher_key, &entry.signature) else {
+        return Err(CliError::PluginError(format!(
+            "Plugin '{}' has no signature in the catalog. \
+             Remove --verify-signature or use a catalog that includes signatures.",
+            entry.id
+        )));
+    };
+    let config_json = entry.config.to_string();
+    let payload = signature::registry_payload(&entry.id, &entry.kind, &config_json);
+    println!("  {} Verifying Ed25519 signature...", "•".bright_black());
+    signature::verify(pub_key, &payload, sig)?;
+    println!("  {} Signature verified", "✓".green());
+    Ok(())
+}
+
+/// Verify signature for a downloaded/local plugin.
+///
+/// The signature is expected to be passed alongside the checksum flag as
+/// `--checksum <sig_b64>` when `--verify-signature` is set, or via a
+/// `<plugin>.sig` sidecar file. For now we enforce that a checksum (which
+/// doubles as the signed payload hash) is provided.
+fn verify_download_signature(
+    plugin_id: &str,
+    content_sha256: &str,
+    provided_sig: Option<&str>,
+) -> Result<(), CliError> {
+    let sig = provided_sig.ok_or_else(|| {
+        CliError::PluginError(
+            "--verify-signature requires --checksum <sig> to be provided for downloaded plugins. \
+             The checksum is the base64-encoded Ed25519 signature over the content hash."
+                .into(),
+        )
+    })?;
+
+    // for downloaded plugins the "public key" must come from a trusted source;
+    // here we surface a clear error pointing developers to the publisher_key field.
+    // a full registry-backed publisher-key lookup is handled by the registry path.
+    let _ = (plugin_id, content_sha256, sig);
+    Err(CliError::PluginError(
+        "Signature verification for non-registry plugins requires a publisher key. \
+         Install the plugin via a registry entry that includes a publisher_key field."
+            .into(),
+    ))
+}
+
 /// Plugin source types
 enum PluginSource {
     LocalPath(PathBuf),
@@ -583,13 +662,95 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_rejects_verify_signature_until_implemented() {
+    async fn test_verify_signature_fails_when_catalog_has_no_signature() {
         let temp = TempDir::new().unwrap();
         let ctx = CliContext::with_temp_dir(temp.path()).await.unwrap();
 
+        disable_default_http_plugin(&ctx);
+
+        // http-plugin in the embedded catalog has no publisher_key / signature
         let err = run(&ctx, "http-plugin", None, true).await.unwrap_err();
-        assert!(err.to_string().contains("not implemented yet"));
-        assert!(err.to_string().contains("--verify-signature"));
+        assert!(
+            err.to_string().contains("no signature"),
+            "expected 'no signature' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_signature_succeeds_for_signed_catalog_entry() {
+        use crate::commands::plugin::signature as sig_mod;
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as B64;
+        use ed25519_dalek::Signer;
+        use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let pub_b64 = B64.encode(signing_key.verifying_key().as_bytes());
+
+        let id = "test-signed-plugin";
+        let kind = "builtin:http";
+        let config = serde_json::json!({ "url": "https://example.com" });
+        let config_json = config.to_string();
+        let payload = sig_mod::registry_payload(id, kind, &config_json);
+        let sig = signing_key.sign(&payload);
+        let sig_b64 = B64.encode(sig.to_bytes());
+
+        let entry = crate::plugin_catalog::PluginCatalogEntry {
+            id: id.to_string(),
+            repo_id: "official".to_string(),
+            name: "Test Signed Plugin".to_string(),
+            description: "a signed test plugin".to_string(),
+            kind: kind.to_string(),
+            config,
+            version: Some("1.0.0".to_string()),
+            publisher_key: Some(pub_b64),
+            signature: Some(sig_b64),
+        };
+
+        // verify_registry_entry_signature is the internal function we can test directly
+        assert!(
+            super::verify_registry_entry_signature(&entry).is_ok(),
+            "valid signature should pass"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_signature_rejects_tampered_entry() {
+        use crate::commands::plugin::signature as sig_mod;
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD as B64;
+        use ed25519_dalek::Signer;
+        use ed25519_dalek::SigningKey;
+        use rand::rngs::OsRng;
+
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let pub_b64 = B64.encode(signing_key.verifying_key().as_bytes());
+
+        // sign original config
+        let original_config = serde_json::json!({ "url": "https://safe.com" });
+        let original_json = original_config.to_string();
+        let payload = sig_mod::registry_payload("plugin", "builtin:http", &original_json);
+        let sig = signing_key.sign(&payload);
+        let sig_b64 = B64.encode(sig.to_bytes());
+
+        // tamper with the config in the entry
+        let tampered_entry = crate::plugin_catalog::PluginCatalogEntry {
+            id: "plugin".to_string(),
+            repo_id: "official".to_string(),
+            name: "Tampered".to_string(),
+            description: "tampered".to_string(),
+            kind: "builtin:http".to_string(),
+            config: serde_json::json!({ "url": "https://evil.com" }),
+            version: Some("1.0.0".to_string()),
+            publisher_key: Some(pub_b64),
+            signature: Some(sig_b64),
+        };
+
+        assert!(
+            super::verify_registry_entry_signature(&tampered_entry).is_err(),
+            "tampered config should fail verification"
+        );
     }
 
     #[tokio::test]

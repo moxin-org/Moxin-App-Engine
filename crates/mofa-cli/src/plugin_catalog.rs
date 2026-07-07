@@ -24,6 +24,12 @@ pub struct PluginCatalogEntry {
     pub description: String,
     pub kind: String,
     pub config: Value,
+    /// semver string, e.g. "1.2.3"
+    pub version: Option<String>,
+    /// base64-encoded Ed25519 public key of the publisher
+    pub publisher_key: Option<String>,
+    /// base64-encoded Ed25519 signature over the canonical registry payload
+    pub signature: Option<String>,
 }
 
 fn base_catalog() -> Vec<PluginCatalogEntry> {
@@ -36,6 +42,10 @@ fn base_catalog() -> Vec<PluginCatalogEntry> {
                 .to_string(),
         kind: "builtin:http".to_string(),
         config: serde_json::json!({ "url": "https://example.com" }),
+        version: Some("1.0.0".to_string()),
+        // populated by the official registry; None in the embedded catalog
+        publisher_key: None,
+        signature: None,
     }]
 }
 

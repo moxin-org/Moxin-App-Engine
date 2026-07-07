@@ -67,6 +67,8 @@ sha2 = "0.10"
 hex = "0.4"
 futures = "0.3"
 anyhow.workspace = true
+base64 = { workspace = true }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 
 # Database (optional, for db init command)
 sqlx = { version = "0.8", features = [
@@ -90,6 +92,7 @@ tokio-stream = "0.1"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+rand = { workspace = true }
 
 [features]
 default = []

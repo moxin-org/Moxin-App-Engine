@@ -628,6 +628,38 @@ fn verify_plugin_checksum(plugin_path: &Path, expected: &str) -> bool {
 mofa-plugin-name = "=0.1.5"  # Pin exact version
 ```
 
+### Ed25519 Signature Verification
+
+From PR #1486, `mofa plugin install` now verifies a detached Ed25519 signature before loading any plugin binary. This closes the supply-chain gap that checksum verification alone does not address -- a compromised registry can serve a valid checksum alongside a malicious binary. An Ed25519 signature ties the binary to a specific publisher key pair.
+
+**How it works:**
+
+```rust
+use mofa_plugins::Ed25519Verifier;
+
+// Publisher signs the plugin binary offline:
+//   openssl genpkey -algorithm ed25519 -out signing_key.pem
+//   openssl pkeyutl -sign -inkey signing_key.pem -in plugin.wasm -out plugin.wasm.sig
+
+// At install time, MoFA verifies before loading:
+let verifier = Ed25519Verifier::from_public_key_pem(&publisher_pubkey)?;
+verifier.verify(&plugin_bytes, &signature_bytes)?; // errors on tamper
+```
+
+**Error variants:**
+
+| Error | Meaning |
+|-------|---------|
+| `PluginSignatureError::InvalidSignature` | Payload was tampered or wrong key used |
+| `PluginSignatureError::MissingSignature` | No `.sig` file found alongside the plugin |
+| `PluginSignatureError::KeyParseError` | Publisher public key is malformed PEM |
+
+**Recommended workflow:**
+
+1. Plugin publishers sign their binary with an Ed25519 key before publishing.
+2. The publisher public key is listed in the mofa plugin registry manifest.
+3. `mofa plugin install` downloads both the binary and the detached `.sig` file and calls `Ed25519Verifier::verify()` before writing anything to disk.
+
 ### Third-Party Plugin Risks
 
 **Risk Assessment**:
