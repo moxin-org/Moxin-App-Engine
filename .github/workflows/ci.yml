@@ -37,6 +37,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run clippy (fail fast on errors)
         run: cargo clippy --workspace --all-features -- -D errors
 
