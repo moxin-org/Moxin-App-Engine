@@ -7,6 +7,7 @@ use super::schema::*;
 use super::{DslError, DslResult};
 use crate::llm::LLMAgent;
 use crate::workflow::builder::WorkflowBuilder;
+use crate::workflow::node::RetryPolicy as NodeRetryPolicy;
 use crate::workflow::state::WorkflowValue;
 use std::collections::HashMap;
 use std::fs;
@@ -69,6 +70,10 @@ impl WorkflowDslParser {
         // Validate definition
         Self::validate(&definition)?;
 
+        // Keep node-level config so it can be applied after graph construction.
+        // Builder APIs don't currently expose full NodeConfig customization.
+        let node_configs = Self::collect_node_configs(&definition.nodes);
+
         // Build workflow
         let mut builder = WorkflowBuilder::new(&definition.metadata.id, &definition.metadata.name)
             .description(&definition.metadata.description);
@@ -87,7 +92,72 @@ impl WorkflowDslParser {
             }
         }
 
-        Ok(builder.build())
+        let mut graph = builder.build();
+        Self::apply_workflow_and_node_config(&mut graph, &definition.config, &node_configs);
+        Ok(graph)
+    }
+
+    fn collect_node_configs(nodes: &[NodeDefinition]) -> HashMap<String, NodeConfigDef> {
+        let mut configs = HashMap::new();
+        for node in nodes {
+            let (id, config) = match node {
+                NodeDefinition::Task { id, config, .. }
+                | NodeDefinition::LlmAgent { id, config, .. }
+                | NodeDefinition::Condition { id, config, .. }
+                | NodeDefinition::Parallel { id, config, .. }
+                | NodeDefinition::Join { id, config, .. }
+                | NodeDefinition::Loop { id, config, .. }
+                | NodeDefinition::Transform { id, config, .. }
+                | NodeDefinition::SubWorkflow { id, config, .. }
+                | NodeDefinition::Wait { id, config, .. } => (id, config),
+                NodeDefinition::Start { .. } | NodeDefinition::End { .. } => continue,
+            };
+            configs.insert(id.clone(), config.clone());
+        }
+        configs
+    }
+
+    fn apply_workflow_and_node_config(
+        graph: &mut crate::workflow::WorkflowGraph,
+        workflow_config: &WorkflowConfig,
+        node_configs: &HashMap<String, NodeConfigDef>,
+    ) {
+        let node_ids: Vec<String> = graph
+            .node_ids()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        for node_id in node_ids {
+            let Some(node) = graph.get_node_mut(&node_id) else {
+                continue;
+            };
+
+            if let Some(retry_policy) = &workflow_config.retry_policy {
+                node.config.retry_policy = Self::convert_retry_policy(retry_policy);
+            }
+            node.config.timeout.execution_timeout_ms = workflow_config.default_timeout_ms;
+
+            if let Some(node_cfg) = node_configs.get(&node_id) {
+                if let Some(retry_policy) = &node_cfg.retry_policy {
+                    node.config.retry_policy = Self::convert_retry_policy(retry_policy);
+                }
+                if let Some(timeout_ms) = node_cfg.timeout_ms {
+                    node.config.timeout.execution_timeout_ms = timeout_ms;
+                }
+                for (key, value) in &node_cfg.metadata {
+                    node.config.metadata.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
+    fn convert_retry_policy(policy: &RetryPolicy) -> NodeRetryPolicy {
+        NodeRetryPolicy {
+            max_retries: policy.max_retries,
+            retry_delay_ms: policy.retry_delay_ms,
+            exponential_backoff: policy.exponential_backoff,
+            max_delay_ms: policy.max_delay_ms,
+        }
     }
 
     /// Validate workflow definition
@@ -271,5 +341,112 @@ impl WorkflowDslParser {
         }
 
         Ok(builder)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkflowDslParser;
+    use crate::llm::LLMAgent;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn workflow_retry_and_timeout_defaults_propagate() {
+        let yaml = r#"
+metadata:
+  id: wf_defaults
+  name: Workflow Defaults
+config:
+  default_timeout_ms: 42000
+  retry_policy:
+    max_retries: 7
+    retry_delay_ms: 250
+    exponential_backoff: false
+    max_delay_ms: 1000
+nodes:
+  - type: start
+    id: start
+  - type: task
+    id: task_a
+    name: Task A
+    executor_type: none
+  - type: end
+    id: end
+edges:
+  - from: start
+    to: task_a
+  - from: task_a
+    to: end
+"#;
+
+        let def = WorkflowDslParser::from_yaml(yaml).expect("DSL should parse");
+        let registry: HashMap<String, Arc<LLMAgent>> = HashMap::new();
+        let graph = WorkflowDslParser::build_with_agents(def, &registry)
+            .await
+            .expect("workflow should build");
+
+        let task = graph.get_node("task_a").expect("task node should exist");
+        assert_eq!(task.config.retry_policy.max_retries, 7);
+        assert_eq!(task.config.retry_policy.retry_delay_ms, 250);
+        assert!(!task.config.retry_policy.exponential_backoff);
+        assert_eq!(task.config.retry_policy.max_delay_ms, 1000);
+        assert_eq!(task.config.timeout.execution_timeout_ms, 42000);
+    }
+
+    #[tokio::test]
+    async fn node_retry_and_timeout_override_workflow_defaults() {
+        let yaml = r#"
+metadata:
+  id: wf_override
+  name: Workflow Override
+config:
+  default_timeout_ms: 60000
+  retry_policy:
+    max_retries: 9
+    retry_delay_ms: 500
+    exponential_backoff: true
+    max_delay_ms: 30000
+nodes:
+  - type: start
+    id: start
+  - type: task
+    id: task_b
+    name: Task B
+    executor_type: none
+    config:
+      timeout_ms: 1500
+      retry_policy:
+        max_retries: 1
+        retry_delay_ms: 10
+        exponential_backoff: false
+        max_delay_ms: 10
+      metadata:
+        owner: workflow-team
+  - type: end
+    id: end
+edges:
+  - from: start
+    to: task_b
+  - from: task_b
+    to: end
+"#;
+
+        let def = WorkflowDslParser::from_yaml(yaml).expect("DSL should parse");
+        let registry: HashMap<String, Arc<LLMAgent>> = HashMap::new();
+        let graph = WorkflowDslParser::build_with_agents(def, &registry)
+            .await
+            .expect("workflow should build");
+
+        let task = graph.get_node("task_b").expect("task node should exist");
+        assert_eq!(task.config.retry_policy.max_retries, 1);
+        assert_eq!(task.config.retry_policy.retry_delay_ms, 10);
+        assert!(!task.config.retry_policy.exponential_backoff);
+        assert_eq!(task.config.retry_policy.max_delay_ms, 10);
+        assert_eq!(task.config.timeout.execution_timeout_ms, 1500);
+        assert_eq!(
+            task.config.metadata.get("owner"),
+            Some(&"workflow-team".to_string())
+        );
     }
 }
