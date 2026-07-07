@@ -31,6 +31,7 @@ eyre.workspace = true
 mofa-kernel = { path = "../mofa-kernel", version = "0.1", features = ["config"] }
 mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
 mofa-plugins = { path = "../mofa-plugins", version = "0.1" }
+semver = { workspace = true }
 mofa-monitoring = { path = "../mofa-monitoring", version = "0.1", optional = true }
 # Dora-rs dependencies
 dora-node-api = { version = "0", default-features = false, optional = true }

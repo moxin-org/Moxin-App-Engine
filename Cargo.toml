@@ -96,3 +96,4 @@ config = { version = "0.14", features = [
     "json5",
 ] }
 regex = "1"
+semver = { version = "1", features = ["serde"] }

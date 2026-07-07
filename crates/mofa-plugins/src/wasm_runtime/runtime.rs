@@ -514,7 +514,7 @@ fn create_plugin_from_module(
     use super::plugin::*;
 
     let manifest = {
-        let mut manifest = super::types::PluginManifest::new(&config.id, "1.0.0");
+        let mut manifest = super::types::PluginManifest::new_from_str(&config.id, "1.0.0").unwrap();
         for export in module.exports() {
             if let ExternType::Func(_) = export.ty() {
                 manifest.exports.push(super::types::PluginExport::function(

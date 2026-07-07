@@ -29,6 +29,7 @@ pub mod rag;
 pub mod retry;
 pub mod runner;
 pub mod security;
+pub mod swarm;
 
 // Dora adapter module (only compiled when dora feature is enabled)
 #[cfg(feature = "dora")]

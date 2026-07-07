@@ -296,7 +296,7 @@ impl WasmPlugin {
 
     fn extract_manifest(module: &Module, config: &WasmPluginConfig) -> PluginManifest {
         // Try to extract from custom section or use defaults
-        let mut manifest = PluginManifest::new(&config.id, "1.0.0");
+        let mut manifest = PluginManifest::new_from_str(&config.id, "1.0.0").unwrap();
 
         // List exports from module
         for export in module.exports() {

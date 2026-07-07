@@ -44,7 +44,7 @@ mod manager;
 mod memory;
 mod plugin;
 pub mod runtime;
-mod types;
+pub mod types;
 
 pub use host::{HostCallback, HostContext, HostFunctions, LogLevel, MessageDirection};
 pub use manager::{LoadedPlugin, PluginEvent, PluginHandle, PluginRegistry, WasmPluginManager};
@@ -54,6 +54,6 @@ pub use memory::{
 pub use plugin::{PluginInstance, PluginMetrics, WasmPlugin, WasmPluginConfig, WasmPluginState};
 pub use runtime::{CompiledModule, ModuleCache, RuntimeConfig, RuntimeStats, WasmRuntime};
 pub use types::{
-    ExecutionConfig, IntoWasmReport, MemoryConfig, PluginCapability, PluginExport, PluginManifest,
-    ResourceLimits, WasmError, WasmReport, WasmResult, WasmType, WasmValue,
+    ExecutionConfig, IntoWasmReport, MemoryConfig, PluginCapability, PluginDep, PluginExport,
+    PluginManifest, ResourceLimits, WasmError, WasmReport, WasmResult, WasmType, WasmValue,
 };

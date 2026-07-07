@@ -548,7 +548,7 @@ mod tests {
     async fn test_plugin_registry() {
         let registry = PluginRegistry::new();
 
-        let manifest = PluginManifest::new("test", "1.0.0")
+        let manifest = PluginManifest::new_from_str("test", "1.0.0").unwrap()
             .with_capability(PluginCapability::ReadConfig)
             .with_capability(PluginCapability::SendMessage);
 

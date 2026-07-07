@@ -2,6 +2,7 @@
 //!
 //! Core types for the WASM plugin runtime
 
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -289,13 +290,89 @@ impl fmt::Display for PluginCapability {
     }
 }
 
+/// Declared dependency requirement for a plugin
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginDep {
+    pub name: String,
+    pub req: VersionReq,
+}
+
+impl PluginDep {
+    /// Create a new dependency with the provided semver requirement
+    pub fn new(name: &str, req: VersionReq) -> Self {
+        Self {
+            name: name.to_string(),
+            req,
+        }
+    }
+
+    /// Helper that parses a textual requirement
+    pub fn parse(name: &str, requirement: &str) -> Result<Self, semver::Error> {
+        let req = VersionReq::parse(requirement)?;
+        Ok(Self {
+            name: name.to_string(),
+            req,
+        })
+    }
+}
+
+/// Audit status captured by the marketplace trust pipeline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuditStatus {
+    Unknown,
+    Passed,
+    Failed,
+    Pending,
+}
+
+impl Default for AuditStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl AuditStatus {
+    pub fn trust_bonus(&self) -> f32 {
+        match self {
+            Self::Passed => 1.0,
+            Self::Pending => 0.5,
+            Self::Unknown => 0.25,
+            Self::Failed => 0.0,
+        }
+    }
+}
+
 /// Plugin manifest describing the plugin
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     /// Plugin name
     pub name: String,
     /// Plugin version
-    pub version: String,
+    pub version: Version,
+    /// Yanked versions should not be selected by default
+    #[serde(default)]
+    pub yanked: bool,
+    /// Deprecated marker kept for registry policy and install-time warnings
+    #[serde(default)]
+    pub deprecated: bool,
+    /// Trust score (0.0 - 1.0)
+    #[serde(default)]
+    pub trust_score: f32,
+    /// Community rating in the range 0.0 - 1.0
+    #[serde(default)]
+    pub community_rating: f32,
+    /// Aggregate download count used by the trust model
+    #[serde(default)]
+    pub download_count: u64,
+    /// Ed25519 signature stored with the published plugin artifact
+    #[serde(default)]
+    pub signature: String,
+    /// Audit state used by marketplace trust policies
+    #[serde(default)]
+    pub audit_status: AuditStatus,
+    /// Internal flag to preserve explicit trust overrides across builder calls.
+    #[serde(skip)]
+    trust_score_locked: bool,
     /// Plugin description
     pub description: Option<String>,
     /// Plugin author
@@ -312,13 +389,24 @@ pub struct PluginManifest {
     pub config_schema: Option<serde_json::Value>,
     /// Plugin metadata
     pub metadata: HashMap<String, String>,
+    /// Declared dependencies
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub dependencies: HashMap<String, VersionReq>,
 }
 
 impl Default for PluginManifest {
     fn default() -> Self {
         Self {
             name: "unknown".to_string(),
-            version: "0.0.0".to_string(),
+            version: Version::new(0, 0, 0),
+            yanked: false,
+            deprecated: false,
+            trust_score: 1.0,
+            community_rating: 0.0,
+            download_count: 0,
+            signature: String::new(),
+            audit_status: AuditStatus::Unknown,
+            trust_score_locked: false,
             description: None,
             author: None,
             license: None,
@@ -327,17 +415,22 @@ impl Default for PluginManifest {
             min_runtime_version: None,
             config_schema: None,
             metadata: HashMap::new(),
+            dependencies: HashMap::new(),
         }
     }
 }
 
 impl PluginManifest {
-    pub fn new(name: &str, version: &str) -> Self {
+    pub fn new(name: &str, version: Version) -> Self {
         Self {
             name: name.to_string(),
-            version: version.to_string(),
+            version,
             ..Default::default()
         }
+    }
+
+    pub fn new_from_str(name: &str, version: &str) -> Result<Self, semver::Error> {
+        Ok(Self::new(name, Version::parse(version)?))
     }
 
     pub fn with_description(mut self, description: &str) -> Self {
@@ -355,6 +448,70 @@ impl PluginManifest {
     pub fn with_export(mut self, export: PluginExport) -> Self {
         self.exports.push(export);
         self
+    }
+
+    pub fn with_dependency(mut self, dependency: PluginDep) -> Self {
+        self.dependencies.insert(dependency.name, dependency.req);
+        self
+    }
+
+    pub fn with_trust_score(mut self, trust_score: f32) -> Self {
+        self.trust_score = trust_score.clamp(0.0, 1.0);
+        self.trust_score_locked = true;
+        self
+    }
+
+    pub fn with_signature(mut self, signature: impl Into<String>) -> Self {
+        self.signature = signature.into();
+        self
+    }
+
+    pub fn with_community_rating(mut self, community_rating: f32) -> Self {
+        self.community_rating = community_rating.clamp(0.0, 1.0);
+        self.recompute_trust_score();
+        self
+    }
+
+    pub fn with_download_count(mut self, download_count: u64) -> Self {
+        self.download_count = download_count;
+        self.recompute_trust_score();
+        self
+    }
+
+    pub fn with_audit_status(mut self, audit_status: AuditStatus) -> Self {
+        self.audit_status = audit_status;
+        self.recompute_trust_score();
+        self
+    }
+
+    pub fn with_yanked(mut self, yanked: bool) -> Self {
+        self.yanked = yanked;
+        self
+    }
+
+    pub fn with_deprecated(mut self, deprecated: bool) -> Self {
+        self.deprecated = deprecated;
+        self
+    }
+
+    pub fn dependency_requirements(&self) -> impl Iterator<Item = PluginDep> + '_ {
+        self.dependencies.iter().map(|(name, req)| PluginDep {
+            name: name.clone(),
+            req: req.clone(),
+        })
+    }
+
+    pub fn recompute_trust_score(&mut self) {
+        if self.trust_score_locked {
+            return;
+        }
+        let downloads_component = ((self.download_count as f32 + 1.0).ln() / 10.0).clamp(0.0, 1.0);
+        self.trust_score = (
+            0.4 * self.community_rating.clamp(0.0, 1.0)
+                + 0.3 * self.audit_status.trust_bonus()
+                + 0.3 * downloads_component
+        )
+        .clamp(0.0, 1.0);
     }
 
     pub fn has_capability(&self, capability: &PluginCapability) -> bool {
@@ -556,13 +713,14 @@ mod tests {
 
     #[test]
     fn test_plugin_manifest() {
-        let manifest = PluginManifest::new("test-plugin", "1.0.0")
+        let manifest = PluginManifest::new_from_str("test-plugin", "1.0.0")
+            .unwrap()
             .with_description("A test plugin")
             .with_capability(PluginCapability::ReadConfig)
             .with_capability(PluginCapability::SendMessage);
 
         assert_eq!(manifest.name, "test-plugin");
-        assert_eq!(manifest.version, "1.0.0");
+        assert_eq!(manifest.version, Version::new(1, 0, 0));
         assert!(manifest.has_capability(&PluginCapability::ReadConfig));
         assert!(!manifest.has_capability(&PluginCapability::Storage));
     }

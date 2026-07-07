@@ -14,6 +14,7 @@ pub mod error_conversions;
 
 pub mod asr;
 pub mod hot_reload;
+pub mod resolver;
 pub mod skill;
 pub mod tool;
 pub mod tools;
@@ -21,6 +22,13 @@ pub mod tts;
 pub mod wasm_runtime;
 
 pub use asr::{ASREngine, ASRPlugin, ASRPluginConfig, MockASREngine};
+pub use resolver::{
+    CompositionError, DependencyResolver, InstallError, PluginId, PluginLock, PluginRegistry,
+    PluginResolver, ResolvedVersions, ResolveError, ResolvedDep, VerificationError,
+    compose_capabilities, install_resolved_plugins, resolve, resolve_install_order,
+    resolve_with_options, resolve_with_runtime, verify_plugin_signature,
+};
+pub use wasm_runtime::PluginDep;
 
 pub use mofa_kernel::{
     AgentPlugin, PluginConfig, PluginContext, PluginError, PluginEvent, PluginMetadata,

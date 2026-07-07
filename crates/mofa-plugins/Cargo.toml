@@ -28,9 +28,12 @@ notify.workspace = true
 libloading.workspace = true
 tempfile.workspace = true
 sha2.workspace = true
+hex.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v7"] }
 rand.workspace = true
+semver = { workspace = true }
+ed25519-dalek = "2.2.0"
 # WASM plugin runtime
 wasmtime = { version = "40", features = ["component-model", "async"] }
 # Local dependencies
