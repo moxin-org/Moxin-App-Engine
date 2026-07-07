@@ -9,10 +9,16 @@ pub mod types;
 
 pub use audit::{AuditLogQuery, ReviewAuditEvent, ReviewAuditEventType};
 pub use context::{
-    Change, Diff, ExecutionStep, ExecutionTrace, PerformanceData, ReviewContext, TelemetrySnapshot,
+    AuditingData, Change, Diff, ExecutionStep, ExecutionTrace, PerformanceData, ReviewContext,
+    TelemetrySnapshot,
 };
 pub use error::{HitlError, HitlResult, StoreError};
-pub use policy::{AlwaysReviewPolicy, NeverReviewPolicy, ReviewPolicy};
+
+// ✅ ONE CLEAN BLOCK: This replaces the two separate policy blocks you had.
+pub use policy::{
+    AlwaysReviewPolicy, AuditValidationPolicy, NeverReviewPolicy, ReviewPolicy, WhaleGuardPolicy,
+};
+
 pub use types::{
     ReviewMetadata, ReviewRequest, ReviewRequestId, ReviewResponse, ReviewStatus, ReviewType,
 };

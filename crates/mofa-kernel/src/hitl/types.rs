@@ -86,6 +86,13 @@ pub enum ReviewResponse {
     },
     /// Deferred to later
     Deferred { reason: String },
+
+    /// NEW: Web3 specific approval 🚀
+    Signed {
+        signature: String,       // The hex/base58 signature
+        tx_hash: Option<String>, // The resulting transaction hash
+        comment: Option<String>,
+    },
 }
 
 /// Review metadata

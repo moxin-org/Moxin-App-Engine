@@ -58,6 +58,21 @@ pub struct Change {
     pub new_value: Option<serde_json::Value>,
 }
 
+/// Structured auditing data for high-integrity workflows
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditingData {
+    /// The core intent of the action
+    pub intent: String,
+    /// The final result or proposal
+    pub result: String,
+    /// Steps taken during the reasoning process
+    pub relevant_trace_steps: Vec<String>,
+    /// Domain-specific financial/technical metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+    /// The status of the internal policy check
+    pub policy_status: String,
+}
+
 /// Review context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewContext {
@@ -105,7 +120,89 @@ impl ReviewContext {
         self.telemetry = telemetry;
         self
     }
+
+    /// Injects structured auditing data into the additional metadata map
+    pub fn with_auditing_data(mut self, data: AuditingData) -> Self {
+        if let Ok(value) = serde_json::to_value(data) {
+            self.additional.insert("audit_trail".to_string(), value);
+        }
+        self
+    }
 }
 
+
+
+
+impl ReviewContext {
+    /// Specialized constructor for high-value blockchain (Whale) protection.
+    /// This "plugs in" the destination and value directly into the Security Seal.
+    pub fn new_whale_trade(
+        token: &str,
+        amount: f64,
+        target_address: &str,
+    ) -> Self {
+        let trace = ExecutionTrace { steps: vec![], duration_ms: 0 };
+        
+        let mut blockchain_meta = HashMap::new();
+        blockchain_meta.insert("token_symbol".to_string(), serde_json::json!(token));
+        blockchain_meta.insert("token_amount".to_string(), serde_json::json!(amount));
+        blockchain_meta.insert("target_address".to_string(), serde_json::json!(target_address));
+
+        let audit = AuditingData {
+            intent: "High-Value Transaction Guard".to_string(),
+            result: format!("Transfer {} {} to {}", amount, token, target_address),
+            relevant_trace_steps: vec!["Risk threshold check initiated".to_string()],
+            metadata: blockchain_meta,
+            policy_status: "Awaiting_Manual_Signoff".to_string(),
+        };
+
+        Self::new(trace, serde_json::json!({}))
+            .with_auditing_data(audit)
+    }
+}
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_auditing_data_integration() {
+        // 1. Create a "dummy" trace for the context
+        let trace = ExecutionTrace {
+            steps: vec![],
+            duration_ms: 0,
+        };
+
+        // 2. Create your new AuditingData
+        let audit = AuditingData {
+            intent: "High-Value Trade".to_string(),
+            result: "Execute Buy".to_string(),
+            relevant_trace_steps: vec!["step_1".to_string()],
+            metadata: HashMap::from([
+                ("asset".to_string(), json!("SOL")),
+                ("amount".to_string(), json!(10.5)),
+            ]),
+            policy_status: "Pass".to_string(),
+        };
+
+        // 3. Use the Builder Pattern to inject it
+        let context = ReviewContext::new(trace, json!({})).with_auditing_data(audit);
+
+        // 4. Verify it was stored correctly in the 'additional' HashMap
+        let stored_audit = context
+            .additional
+            .get("audit_trail")
+            .expect("Audit trail should exist");
+
+        assert_eq!(stored_audit["intent"], "High-Value Trade");
+        assert_eq!(stored_audit["policy_status"], "Pass");
+
+        println!("✅ Audit Trail successfully serialized into ReviewContext!");
+    }
+}
 /// Review metadata (re-exported from types for convenience)
 pub use crate::hitl::types::ReviewMetadata;
