@@ -25,6 +25,7 @@ mofa-kernel = { path = "../mofa-kernel", version = "0.1", features = [
 ] }
 mofa-runtime = { path = "../mofa-runtime", version = "0.1" }
 mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
+mofa-testing = { path = "../../tests", version = "0.1" }
 config.workspace = true
 tokio = { workspace = true }
 thiserror = { workspace = true }

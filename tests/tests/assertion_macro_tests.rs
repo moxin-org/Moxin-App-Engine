@@ -1,11 +1,11 @@
-//! Tests for assertion macros: assert_tool_called!, assert_tool_called_with!,
-//! assert_infer_called!, assert_bus_message_sent!.
+//! Tests for assertion macros and assertion helpers used by the testing crate.
 
 use mofa_foundation::agent::components::tool::SimpleTool;
 use mofa_foundation::orchestrator::{ModelOrchestrator, ModelProviderConfig, ModelType};
 use mofa_kernel::agent::components::tool::ToolInput;
 use mofa_kernel::bus::CommunicationMode;
 use mofa_kernel::message::AgentMessage;
+use mofa_testing::agent_runner::AgentTestRunner;
 use mofa_testing::backend::MockLLMBackend;
 use mofa_testing::bus::MockAgentBus;
 use mofa_testing::tools::MockTool;
@@ -120,4 +120,90 @@ async fn assert_bus_message_sent_panics_when_no_message_from_sender() {
         .await;
 
     mofa_testing::assert_bus_message_sent!(bus, "agent-2");
+}
+
+// ===================================================================
+// New assertion helpers
+// ===================================================================
+
+#[tokio::test]
+async fn assert_tool_last_result_passes_on_matching_output() {
+    let tool = MockTool::new("search", "Search tool", json!({"type": "object"}));
+    tool.execute(ToolInput::from_json(json!({"query": "rust"})))
+        .await;
+
+    mofa_testing::assert_tool_last_result!(tool, json!("Mock execution default"));
+}
+
+#[tokio::test]
+async fn assert_agent_output_text_passes_on_matching_output() {
+    let mut runner = AgentTestRunner::new().await.expect("runner initializes");
+    runner.mock_llm().add_response("hello from runner").await;
+
+    let result = runner.run_text("hello").await.expect("run succeeds");
+
+    mofa_testing::assert_agent_output_text!(result, "hello from runner");
+    runner.shutdown().await.expect("shutdown succeeds");
+}
+
+#[tokio::test]
+async fn assert_run_failed_with_passes_on_matching_error() {
+    let mut runner = AgentTestRunner::new().await.expect("runner initializes");
+    runner.mock_llm().add_error_response("mock failure").await;
+
+    let result = runner.run_text("hello").await.expect("run completes");
+
+    mofa_testing::assert_run_failed_with!(result, "mock failure");
+    runner.shutdown().await.expect("shutdown succeeds");
+}
+
+#[tokio::test]
+async fn assert_workspace_contains_file_passes_when_snapshot_has_file() {
+    let mut runner = AgentTestRunner::new().await.expect("runner initializes");
+    runner.mock_llm().add_response("workspace ready").await;
+
+    let result = runner.run_text("hello").await.expect("run succeeds");
+    let expected = format!("sessions/{}.jsonl", runner.session_id());
+
+    mofa_testing::assert_workspace_contains_file!(result.metadata.workspace_snapshot_after, expected);
+    runner.shutdown().await.expect("shutdown succeeds");
+}
+
+#[tokio::test]
+async fn assert_run_recorded_tool_call_passes_when_tool_metadata_exists() {
+    let mut runner = AgentTestRunner::new().await.expect("runner initializes");
+    let tool = MockTool::new(
+        "echo_tool",
+        "Echo tool",
+        json!({
+            "type": "object",
+            "properties": { "input": { "type": "string" } },
+            "required": ["input"]
+        }),
+    );
+    runner
+        .register_mock_tool(tool)
+        .await
+        .expect("tool registered");
+    runner
+        .mock_llm()
+        .add_tool_call_response("echo_tool", json!({ "input": "ping" }), None)
+        .await;
+    runner.mock_llm().add_response("done").await;
+
+    let result = runner.run_text("use tool").await.expect("run succeeds");
+
+    mofa_testing::assert_run_recorded_tool_call!(result, "echo_tool");
+    runner.shutdown().await.expect("shutdown succeeds");
+}
+
+#[tokio::test]
+async fn assert_runner_total_executions_passes_on_first_run() {
+    let mut runner = AgentTestRunner::new().await.expect("runner initializes");
+    runner.mock_llm().add_response("counted").await;
+
+    let result = runner.run_text("hello").await.expect("run succeeds");
+
+    mofa_testing::assert_runner_total_executions!(result, 1);
+    runner.shutdown().await.expect("shutdown succeeds");
 }
