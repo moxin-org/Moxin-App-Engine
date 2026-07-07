@@ -294,7 +294,7 @@ impl CompiledScript {
 pub struct RhaiScriptEngine {
     /// Rhai 引擎实例
     /// Rhai engine instance
-    engine: Engine,
+    engine: Arc<Engine>,
     /// 引擎配置
     /// Engine configuration
     #[allow(dead_code)]
@@ -330,7 +330,7 @@ impl RhaiScriptEngine {
         let global_scope = Scope::new();
 
         Ok(Self {
-            engine,
+            engine: Arc::new(engine),
             config,
             script_cache: Arc::new(RwLock::new(HashMap::new())),
             global_scope,
@@ -545,9 +545,16 @@ impl RhaiScriptEngine {
         let mut scope = self.global_scope.clone();
         self.prepare_scope(&mut scope, context);
 
-        // 执行脚本
-        // Execute the script
-        let result = self.engine.eval_with_scope::<Dynamic>(&mut scope, source);
+        // 执行脚本 — 将阻塞的解释器调用转移到专用线程池，避免占用 Tokio 异步线程
+        // Execute the script — offload the blocking interpreter call to the blocking
+        // thread pool so that Tokio's async workers remain available.
+        let engine = Arc::clone(&self.engine);
+        let source = source.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            engine.eval_with_scope::<Dynamic>(&mut scope, &source)
+        })
+        .await
+        .map_err(|e| RhaiError::ExecutionError(format!("spawn_blocking join error: {}", e)))?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         let logs = self.logs.read().await.clone();
@@ -582,10 +589,19 @@ impl RhaiScriptEngine {
         script_id: &str,
         context: &ScriptContext,
     ) -> RhaiResult<ScriptResult> {
-        let cache = self.script_cache.read().await;
-        let compiled = cache
-            .get(script_id)
-            .ok_or_else(|| RhaiError::NotFound(format!("Script not found: {}", script_id)))?;
+        // 在持有锁的范围内克隆 AST，然后立即释放读锁
+        // Clone the AST while holding the read lock, then release the lock immediately
+        // before any blocking work. This prevents the lock from being held across the
+        // multi-second Rhai execution, which would otherwise starve hot-reload writers.
+        // Rhai AST clones are cheap — the module tree is Arc-backed.
+        let ast = {
+            let cache = self.script_cache.read().await;
+            cache
+                .get(script_id)
+                .ok_or_else(|| RhaiError::NotFound(format!("Script not found: {}", script_id)))?
+                .ast
+                .clone()
+        };
 
         let start_time = std::time::Instant::now();
 
@@ -601,11 +617,15 @@ impl RhaiScriptEngine {
         let mut scope = self.global_scope.clone();
         self.prepare_scope(&mut scope, context);
 
-        // 执行已编译的 AST
-        // Execute the compiled AST
-        let result = self
-            .engine
-            .eval_ast_with_scope::<Dynamic>(&mut scope, &compiled.ast);
+        // 执行已编译的 AST — 转移到阻塞线程池
+        // Execute the compiled AST — offload to the blocking thread pool so that
+        // Tokio's async workers are not blocked for the duration of script execution.
+        let engine = Arc::clone(&self.engine);
+        let result = tokio::task::spawn_blocking(move || {
+            engine.eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+        })
+        .await
+        .map_err(|e| RhaiError::ExecutionError(format!("spawn_blocking join error: {}", e)))?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         let logs = self.logs.read().await.clone();
@@ -642,10 +662,16 @@ impl RhaiScriptEngine {
         args: Vec<serde_json::Value>,
         context: &ScriptContext,
     ) -> RhaiResult<T> {
-        let cache = self.script_cache.read().await;
-        let compiled = cache
-            .get(script_id)
-            .ok_or_else(|| RhaiError::NotFound(format!("Script not found: {}", script_id)))?;
+        // 在持有锁的范围内克隆 AST，然后立即释放读锁
+        // Clone the AST while holding the read lock, then release immediately.
+        let ast = {
+            let cache = self.script_cache.read().await;
+            cache
+                .get(script_id)
+                .ok_or_else(|| RhaiError::NotFound(format!("Script not found: {}", script_id)))?
+                .ast
+                .clone()
+        };
 
         // 准备作用域
         // Prepare scope
@@ -656,12 +682,16 @@ impl RhaiScriptEngine {
         // Convert arguments
         let dynamic_args: Vec<Dynamic> = args.iter().map(json_to_dynamic).collect();
 
-        // 调用函数
-        // Call function
-        let result: Dynamic = self
-            .engine
-            .call_fn(&mut scope, &compiled.ast, function_name, dynamic_args)
-            .map_err(|e| RhaiError::ExecutionError(e.to_string()))?;
+        // 调用函数 — 转移到阻塞线程池
+        // Call function — offload to the blocking thread pool.
+        let engine = Arc::clone(&self.engine);
+        let function_name = function_name.to_string();
+        let result: Dynamic = tokio::task::spawn_blocking(move || {
+            engine.call_fn::<Dynamic>(&mut scope, &ast, &function_name, dynamic_args)
+        })
+        .await
+        .map_err(|e| RhaiError::ExecutionError(format!("spawn_blocking join error: {}", e)))?
+        .map_err(|e| RhaiError::ExecutionError(e.to_string()))?;
 
         // 转换结果
         // Convert result
@@ -742,10 +772,13 @@ impl RhaiScriptEngine {
         &self.engine
     }
 
-    /// 获取可变引擎引用
-    /// Get mutable engine reference
-    pub fn engine_mut(&mut self) -> &mut Engine {
-        &mut self.engine
+    /// 获取可变引擎引用（仅在没有并发执行时可用）
+    /// Get mutable engine reference (only available when no concurrent execution is in progress).
+    ///
+    /// Returns `None` if any `spawn_blocking` tasks are currently holding a clone of the
+    /// inner `Arc<Engine>`. Call this only during setup, before executing any scripts.
+    pub fn engine_mut(&mut self) -> Option<&mut Engine> {
+        Arc::get_mut(&mut self.engine)
     }
 }
 
