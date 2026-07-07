@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tokio::time::timeout;
 use tracing::Instrument;
 
@@ -566,20 +566,36 @@ impl ExecutionEngine {
 
     /// 并行执行多个 Agent
     /// Execute multiple agents in parallel
+    /// Respects concurrency limits to prevent resource exhaustion.
+    /// Default concurrency: 10 concurrent tasks
     pub async fn execute_parallel(
         &self,
         executions: Vec<(String, AgentInput)>,
         options: ExecutionOptions,
     ) -> Vec<AgentResult<ExecutionResult>> {
+        // Use Semaphore to limit concurrent task spawning
+        // Default: 10 concurrent tasks (respects RuntimeConfig::max_concurrent_tasks default)
+        let max_concurrent = 10;
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut handles = Vec::new();
 
         for (agent_id, input) in executions {
             let engine = self.clone();
             let opts = options.clone();
+            let sem = semaphore.clone();
 
             let span = tracing::info_span!("agent.parallel", agent_id = %agent_id);
+
+            // Acquire a permit before spawning the task
+            let permit = sem.acquire().await.expect("semaphore should never be closed");
+
             let handle = tokio::spawn(
-                async move { engine.execute(&agent_id, input, opts).await }.instrument(span),
+                async move {
+                    // Hold the permit for the entire execution
+                    let _permit = permit;
+                    engine.execute(&agent_id, input, opts).await
+                }
+                .instrument(span),
             );
 
             handles.push(handle);
