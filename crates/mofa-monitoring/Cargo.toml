@@ -47,7 +47,7 @@ sha2.workspace = true
 axum = { workspace = true, features = ["macros", "ws"] }
 tower = { version = "0.5", features = ["util", "timeout"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "cors", "trace"] }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true, features = ["metrics", "rt-tokio"] }
 opentelemetry-otlp = { workspace = true, optional = true, features = [
