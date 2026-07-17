@@ -34,14 +34,14 @@ chrono = { workspace = true }
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
-colored = "2"
+colored = "3"
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
-toml = "0.8"
-json5 = "0.4"
+toml = "1.0"
+json5 = "1.3"
 
 
 # Utilities
@@ -49,21 +49,21 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # CLI enhancements
-dialoguer = "0.11"
-indicatif = "0.17"
+dialoguer = "0.12"
+indicatif = "0.18"
 comfy-table = "7"
 dirs-next = "2"
-tera = "1.19"
+tera = "2.0"
 
 # Process management
-nix = { version = "0.29", features = ["process", "signal"] }
+nix = { version = "0.31", features = ["process", "signal"] }
 
 # Plugin installation
 reqwest = { workspace = true, features = ["rustls-tls", "stream"] }
 flate2 = "1.0"
 tar = "0.4"
-zip = "2.1"
-sha2 = "0.10"
+zip = "8.6"
+sha2 = "0.11"
 hex = "0.4"
 futures = "0.3"
 anyhow.workspace = true
