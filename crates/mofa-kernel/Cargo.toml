@@ -31,7 +31,7 @@ chrono.workspace = true
 
 
 # Config parsing
-toml = { version = "0.8", optional = true }
+toml = { version = "1.0", optional = true }
 config = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 
