@@ -30,7 +30,7 @@ tracing.workspace = true
 chrono.workspace = true
 
 # System information for hardware detection and memory monitoring
-sysinfo = "0.31"
+sysinfo = "0.36"
 
 mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
 
