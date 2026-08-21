@@ -40,7 +40,7 @@ dora-core = { version = "0", features = ["build"], optional = true }
 dora-message = { version = "0", optional = true }
 
 serde_yaml = { workspace = true }
-toml = "0.8"
+toml = "1.0"
 config.workspace = true
 regex.workspace = true
 chrono.workspace = true

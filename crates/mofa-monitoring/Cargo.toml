@@ -67,10 +67,10 @@ mofa-foundation = { path = "../mofa-foundation", version = "0.1" }
 futures = "0.3.31"
 
 # System metrics
-sysinfo = "0.32"
+sysinfo = "0.36"
 
 [dev-dependencies]
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.29"
 futures-util = "0.3"
 mofa-foundation = { path = "../mofa-foundation" }
 mofa-kernel = { path = "../mofa-kernel" }
